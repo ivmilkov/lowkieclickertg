@@ -187,6 +187,96 @@
     push();
   }
 
+  // ---------- лидеры ----------
+  const leaders = { list: null, error: false, at: 0, drawnKey: '' };
+
+  function renderLeadersCloud() {
+    const box = document.getElementById('leadersList');
+    const tab = document.getElementById('friends');
+    if (!box || !tab || tab.style.display === 'none') return;
+
+    const myTotal = Math.floor(Number(state.total) || 0);
+    const key = leaders.at + '|' + leaders.error + '|' + myTotal;
+    if (key === leaders.drawnKey) return;
+    leaders.drawnKey = key;
+
+    box.innerHTML = '';
+    const note = (text) => {
+      const d = document.createElement('div');
+      d.style.cssText = 'color:var(--muted);text-align:center;padding:16px;font-size:13px;';
+      d.textContent = text;
+      box.appendChild(d);
+    };
+
+    if (!leaders.list) { note(leaders.error ? 'не удалось загрузить таблицу лидеров' : 'загрузка…'); return; }
+    if (leaders.list.length === 0) { note('пока никого нет'); return; }
+
+    const medals = ['🥇', '🥈', '🥉'];
+    const addRow = (rank, name, total, isMe) => {
+      const row = document.createElement('div');
+      row.className = 'upgrade-card';
+      if (isMe) row.style.border = '1px solid rgba(255,209,102,0.5)';
+
+      const place = document.createElement('div');
+      place.style.cssText = 'width:34px;text-align:center;font-weight:800;font-size:16px;flex-shrink:0;';
+      place.textContent = rank && rank <= 3 ? medals[rank - 1] : (rank ? String(rank) : '—');
+
+      const avatar = document.createElement('div');
+      avatar.style.cssText = 'width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#ff7e5f,#feb47b);display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;flex-shrink:0;';
+      avatar.textContent = (Array.from(name)[0] || '?').toUpperCase();
+
+      const info = document.createElement('div');
+      info.style.cssText = 'flex:1;min-width:0;margin-left:4px;';
+      const nm = document.createElement('strong');
+      nm.style.cssText = 'display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      nm.textContent = name + (isMe ? ' (вы)' : '');
+      const bal = document.createElement('div');
+      bal.style.cssText = 'color:var(--accent);font-weight:700;';
+      bal.textContent = formatNum(total) + ' монет';
+      info.appendChild(nm);
+      info.appendChild(bal);
+
+      row.appendChild(place);
+      row.appendChild(avatar);
+      row.appendChild(info);
+      box.appendChild(row);
+    };
+
+    let meInList = false;
+    leaders.list.forEach(p => {
+      if (p.isMe) meInList = true;
+      addRow(p.rank, p.name, p.isMe ? myTotal : p.total, p.isMe);
+    });
+    if (!meInList) {
+      note('· · ·');
+      addRow(null, nick, myTotal, true);
+    }
+  }
+
+  // подменяем заглушку «один игрок» из script.js на настоящую таблицу
+  renderLeaders = renderLeadersCloud;
+
+  async function fetchLeaders() {
+    if (!ready) return;
+    try {
+      const r = await api({ action: 'top' });
+      if (!r.ok) throw new Error('top ' + r.status);
+      leaders.list = r.data.top || [];
+      leaders.error = false;
+    } catch (e) {
+      leaders.error = true;
+    }
+    leaders.at = Date.now();
+    renderLeadersCloud();
+  }
+
+  const friendsTabBtn = document.getElementById('tab-friends');
+  if (friendsTabBtn) friendsTabBtn.addEventListener('click', () => { renderLeadersCloud(); fetchLeaders(); });
+  setInterval(() => {
+    const tab = document.getElementById('friends');
+    if (tab && tab.style.display !== 'none' && document.visibilityState === 'visible') fetchLeaders();
+  }, 30000);
+
   // периодическая отправка, отправка при сворачивании/закрытии
   setInterval(() => push(), 5000);
   document.addEventListener('visibilitychange', async () => {
