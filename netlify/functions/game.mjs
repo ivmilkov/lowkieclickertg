@@ -3,6 +3,8 @@ import { getStore } from '@netlify/blobs';
 
 const MAX_BODY = 600_000;           // символов в JSON сохранения
 const MAX_AUTH_AGE = 3 * 24 * 3600; // initData старше 3 суток не принимаем
+const TOP_SIZE = 50;                // сколько игроков в таблице лидеров
+const LB_UPDATE_EVERY = 30_000;     // не чаще раза в 30 сек на игрока обновляем таблицу
 
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), {
@@ -42,6 +44,31 @@ function verifyInitData(initData, botToken) {
   }
 }
 
+// Имя для таблицы лидеров: имя + фамилия из Telegram (не @username)
+function displayName(user) {
+  const name = [user.first_name, user.last_name].filter(Boolean).join(' ').trim() || user.username || 'Игрок';
+  return name.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 40);
+}
+
+// Обновить общий список топ-игроков
+async function updateTop(lb, id, name, total) {
+  const top = (await lb.get('top', { type: 'json' })) || { entries: {} };
+  const entries = top.entries || {};
+  const ids = Object.keys(entries);
+
+  // не попадаем в топ и не было в нём — ничего не пишем
+  if (!entries[id] && ids.length >= TOP_SIZE) {
+    const min = Math.min(...ids.map(k => entries[k].t));
+    if (total <= min) return;
+  }
+
+  entries[id] = { n: name, t: total };
+  const sorted = Object.entries(entries).sort((a, b) => b[1].t - a[1].t).slice(0, TOP_SIZE);
+  top.entries = Object.fromEntries(sorted);
+  top.updatedAt = Date.now();
+  await lb.setJSON('top', top);
+}
+
 export default async (req) => {
   if (req.method !== 'POST') return json({ error: 'method' }, 405);
 
@@ -62,11 +89,26 @@ export default async (req) => {
 
   // strong: читаем всегда свежую запись, а не устаревшую копию
   const store = getStore({ name: 'players', consistency: 'strong' });
+  const lb = getStore({ name: 'leaderboard', consistency: 'strong' });
   const key = `u_${user.id}`;
   const current = await store.get(key, { type: 'json' });
 
   if (body.action === 'load') {
     return json({ exists: !!current, record: current || null });
+  }
+
+  if (body.action === 'top') {
+    const top = (await lb.get('top', { type: 'json' })) || { entries: {} };
+    const list = Object.entries(top.entries || {})
+      .sort((a, b) => b[1].t - a[1].t)
+      .slice(0, TOP_SIZE)
+      .map(([id, e], i) => ({
+        rank: i + 1,
+        name: e.n,
+        total: e.t,
+        isMe: id === String(user.id)
+      }));
+    return json({ top: list, updatedAt: top.updatedAt || 0 });
   }
 
   if (body.action === 'save') {
@@ -90,6 +132,10 @@ export default async (req) => {
       }
     }
 
+    const now = Date.now();
+    const name = displayName(user);
+    const lbDue = !current || now - (current.lbAt || 0) > LB_UPDATE_EVERY;
+
     const record = {
       rev: curRev + 1,
       state: st,
@@ -97,10 +143,19 @@ export default async (req) => {
       deviceId: typeof body.deviceId === 'string' ? body.deviceId.slice(0, 64) : null,
       tgId: user.id,
       username: user.username || null,
-      firstName: user.first_name || null,
-      updatedAt: Date.now()
+      name,
+      lbAt: lbDue ? now : (current.lbAt || 0),
+      updatedAt: now
     };
     await store.setJSON(key, record);
+
+    if (lbDue) {
+      try {
+        await updateTop(lb, String(user.id), name, Math.floor(Number(st.total)));
+      } catch (e) {
+        console.error('leaderboard update failed', e);
+      }
+    }
     return json({ ok: true, rev: record.rev });
   }
 
