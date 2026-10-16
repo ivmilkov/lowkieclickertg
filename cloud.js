@@ -9,6 +9,8 @@
 
   const API = '/.netlify/functions/game';
   const META_KEY = 'lowkie_cloud_meta';
+  const DIRTY_KEY = 'lowkie_cloud_dirty';
+  const DEVICE_KEY = 'lowkie_cloud_device';
   const EXTRA_KEYS = ['lowkie_little_last', 'lowkie_wheel_last'];
   const MAX_HISTORY = 200;
 
@@ -18,6 +20,14 @@
   const nick = tgUser.username
     ? '@' + tgUser.username
     : ([tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || 'player_' + uid);
+
+  // уникальный id этого устройства, чтобы сервер отличал «свои» записи от чужих
+  let deviceId = null;
+  try { deviceId = localStorage.getItem(DEVICE_KEY); } catch (e) {}
+  if (!deviceId) {
+    deviceId = 'd' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    try { localStorage.setItem(DEVICE_KEY, deviceId); } catch (e) {}
+  }
 
   let ready = false;
   let adopting = false;
@@ -33,6 +43,14 @@
     meta = m;
     try { localStorage.setItem(META_KEY, JSON.stringify(m)); } catch (e) {}
   }
+  // «есть несохранённые на сервер изменения» — помним даже после перезапуска игры
+  function setDirty(v) {
+    dirty = v;
+    try { if (v) localStorage.setItem(DIRTY_KEY, '1'); else localStorage.removeItem(DIRTY_KEY); } catch (e) {}
+  }
+  function wasDirty() {
+    try { return localStorage.getItem(DIRTY_KEY) === '1'; } catch (e) { return false; }
+  }
 
   // --- экран загрузки, чтобы игрок не тапал до синхронизации ---
   const overlay = document.createElement('div');
@@ -46,14 +64,14 @@
   save = function () {
     if (adopting) return;
     origSave();
-    dirty = true;
+    setDirty(true);
   };
 
   async function api(payload, keepalive) {
     const res = await fetch(API, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(Object.assign({ initData }, payload)),
+      body: JSON.stringify(Object.assign({ initData, deviceId }, payload)),
       keepalive: !!keepalive
     });
     let data = null;
@@ -86,6 +104,7 @@
         const best = Math.max(local, Number(extra[k]) || 0);
         if (best > 0) localStorage.setItem(k, String(best));
       });
+      localStorage.removeItem(DIRTY_KEY);
     } catch (e) { console.error('[cloud] adopt failed', e); }
     writeMeta({ uid, rev: record.rev });
     location.reload();
@@ -94,15 +113,27 @@
   async function push(keepalive) {
     if (!ready || inflight || adopting || !dirty) return;
     inflight = true;
-    dirty = false;
+    dirty = false; // если за время отправки игрок ещё потапает, save() вернёт true
     try {
       const p = buildPayload();
       const r = await api({ action: 'save', baseRev: meta.rev, state: p.state, extra: p.extra }, keepalive);
-      if (r.status === 409 && r.data && r.data.record) { adopt(r.data.record); return; }
+      if (r.status === 409 && r.data && r.data.record) {
+        const rec = r.data.record;
+        if (rec.deviceId === deviceId) {
+          // запись сделали мы сами (ответ потерялся / сервер отдал не самую свежую копию) —
+          // свой прогресс не трогаем, просто сверяем номер версии и отправим снова
+          writeMeta({ uid, rev: rec.rev });
+          setDirty(true);
+        } else {
+          adopt(rec); // реально писали с другого устройства
+        }
+        return;
+      }
       if (!r.ok) throw new Error('save ' + r.status);
       writeMeta({ uid, rev: r.data.rev });
+      if (!dirty) { try { localStorage.removeItem(DIRTY_KEY); } catch (e) {} }
     } catch (e) {
-      dirty = true; // попробуем в следующий раз
+      setDirty(true); // попробуем в следующий раз
     } finally {
       inflight = false;
     }
@@ -117,19 +148,27 @@
     if (!r.data.exists) {
       // первый вход с этого аккаунта: заливаем текущий локальный прогресс на сервер
       writeMeta({ uid, rev: 0 });
-      dirty = true;
+      setDirty(true);
     } else {
       const rec = r.data.record;
       if (meta.uid === uid) {
-        if (meta.rev < rec.rev) { adopt(rec); return; }            // с другого устройства ушли вперёд
-        if (meta.rev > rec.rev) writeMeta({ uid, rev: rec.rev });  // на всякий случай
-        dirty = true;                                               // локальные несохранённые тапы дольём
+        if (meta.rev < rec.rev) {
+          if (rec.deviceId === deviceId) {
+            writeMeta({ uid, rev: rec.rev }); // это наша же запись, прогресс на устройстве актуален
+          } else {
+            adopt(rec); return;               // с другого устройства ушли вперёд
+          }
+        } else if (meta.rev > rec.rev) {
+          writeMeta({ uid, rev: rec.rev });   // сервер отдал более старую копию — доверяем себе
+          setDirty(true);
+        }
+        if (wasDirty()) setDirty(true);       // дольём то, что не успело уйти в прошлый раз
       } else {
         // это устройство ещё не было привязано к аккаунту
         const serverTotal = Number(rec.state && rec.state.total) || 0;
         if (localTotal > serverTotal) {
           writeMeta({ uid, rev: rec.rev }); // локальный прогресс больше — он становится основным
-          dirty = true;
+          setDirty(true);
         } else {
           adopt(rec);
           return;
@@ -138,8 +177,12 @@
     }
 
     ready = true;
-    state.nickname = nick;
-    save();
+    if (state.nickname !== nick) {
+      state.nickname = nick;
+      save(); // ник поменялся — сохраняем и отправим
+    } else {
+      origSave(); // просто фиксируем локально, на сервер без лишней записи
+    }
     try { updateUI(); } catch (e) {}
     push();
   }
@@ -153,7 +196,10 @@
     try {
       await push();
       const r = await api({ action: 'load' });
-      if (r.ok && r.data.exists && r.data.record.rev > meta.rev && !dirty) adopt(r.data.record);
+      if (r.ok && r.data.exists && !dirty && !inflight) {
+        const rec = r.data.record;
+        if (rec.rev > meta.rev && rec.deviceId !== deviceId) adopt(rec);
+      }
     } catch (e) {}
   });
   window.addEventListener('pagehide', () => push(true));
