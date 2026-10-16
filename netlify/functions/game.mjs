@@ -60,7 +60,8 @@ export default async (req) => {
   const user = verifyInitData(body.initData, botToken);
   if (!user) return json({ error: 'unauthorized' }, 401);
 
-  const store = getStore('players');
+  // strong: читаем всегда свежую запись, а не устаревшую копию
+  const store = getStore({ name: 'players', consistency: 'strong' });
   const key = `u_${user.id}`;
   const current = await store.get(key, { type: 'json' });
 
@@ -93,6 +94,7 @@ export default async (req) => {
       rev: curRev + 1,
       state: st,
       extra,
+      deviceId: typeof body.deviceId === 'string' ? body.deviceId.slice(0, 64) : null,
       tgId: user.id,
       username: user.username || null,
       firstName: user.first_name || null,
