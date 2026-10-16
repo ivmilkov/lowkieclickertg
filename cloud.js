@@ -59,6 +59,12 @@
   document.body.appendChild(overlay);
   function hideOverlay() { overlay.remove(); }
 
+  // ник, заданный из админки, script.js не знает — подхватим флаг из сохранения сами
+  try {
+    const rawSaved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (rawSaved && rawSaved.nickOverride) state.nickOverride = true;
+  } catch (e) {}
+
   // --- перехват save(): любое сохранение игры помечает данные как «надо отправить» ---
   const origSave = save;
   save = function () {
@@ -83,7 +89,7 @@
     const s = JSON.parse(JSON.stringify(state));
     delete s.support; // обращения в поддержку (с файлами) остаются только на устройстве
     if (Array.isArray(s.history) && s.history.length > MAX_HISTORY) s.history = s.history.slice(0, MAX_HISTORY);
-    s.nickname = nick;
+    if (!s.nickOverride) s.nickname = nick;
     const extra = {};
     EXTRA_KEYS.forEach(k => { const v = Number(localStorage.getItem(k)); if (v > 0) extra[k] = v; });
     return { state: s, extra };
@@ -95,7 +101,7 @@
     ready = false;
     const st = Object.assign({}, record.state);
     st.support = (state && state.support) || { tickets: [] };
-    st.nickname = nick;
+    if (!st.nickOverride) st.nickname = nick;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(st));
       const extra = record.extra || {};
@@ -177,7 +183,7 @@
     }
 
     ready = true;
-    if (state.nickname !== nick) {
+    if (!state.nickOverride && state.nickname !== nick) {
       state.nickname = nick;
       save(); // ник поменялся — сохраняем и отправим
     } else {

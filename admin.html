@@ -2,7 +2,9 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>админ панель</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
     body { font-family:Inter, ui-sans-serif, system-ui, -apple-system,"Segoe UI",Roboto,Arial; background:#0f1724; color:#fff; text-align:center; padding:24px; }
     input, button { padding:10px; margin:8px; border-radius:8px; border:none; font-size:14px; }
@@ -13,6 +15,7 @@
     #status { margin-bottom:10px; color:#fff; }
     .danger { background:#ff6b6b; color:#071226; }
     .muted { color:#9aa6b2; font-size:13px; display:block; margin-top:6px; }
+    #mode { color:#9aa6b2; font-size:12px; margin-bottom:12px; }
 
     /* Стиль только для тумблера автофарма */
     .switch {
@@ -57,6 +60,7 @@
 </head>
 <body>
   <h2>админ панель</h2>
+  <div id="mode">загрузка…</div>
 
   <div id="login">
     <input type="text" id="user" placeholder="имя пользователя"><br>
@@ -68,6 +72,7 @@
     <div id="status">
       текущее: <span id="curCoins">—</span> монет, <span id="curDiamonds">—</span> алмазов
     </div>
+    <button onclick="reloadStatus()">обновить данные</button>
 
     <div class="row">
       <h3>монеты</h3>
@@ -134,20 +139,65 @@
     const PASS = "pkZnlmwmjRZzlu";
     const STORAGE_KEY = "lowkie_clicker_v2";
 
-    // вход
+    // ---------- режим: синхронизация с Telegram или локально ----------
+    const tg = window.Telegram && window.Telegram.WebApp;
+    const initData = tg && tg.initData;
+    const CLOUD = !!initData;
+    const API = '/.netlify/functions/game';
+    // у админки свой id устройства, чтобы игра на других устройствах видела её правки как «чужие» и подтягивала их
+    const deviceId = 'admin_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    const cloud = { rev: 0, state: null, extra: {}, loaded: false };
+
+    if (CLOUD) { try { tg.ready(); tg.expand(); } catch (e) {} }
+
+    async function api(payload) {
+      const res = await fetch(API, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(Object.assign({ initData, deviceId }, payload))
+      });
+      let data = null;
+      try { data = await res.json(); } catch (e) {}
+      return { status: res.status, ok: res.ok, data };
+    }
+
+    // подтянуть свежий прогресс с сервера
+    async function loadCloud() {
+      try {
+        const r = await api({ action: 'load' });
+        if (!r.ok) throw new Error('load ' + r.status);
+        if (r.data.exists) {
+          cloud.state = r.data.record.state;
+          cloud.rev = r.data.record.rev;
+          cloud.extra = r.data.record.extra || {};
+        } else {
+          cloud.state = null;
+          cloud.rev = 0;
+        }
+        cloud.loaded = true;
+        return !!cloud.state;
+      } catch (e) {
+        cloud.loaded = false;
+        document.getElementById('mode').textContent = 'нет связи с сервером';
+        return false;
+      }
+    }
+
+    // ---------- вход ----------
     function login() {
       const u = document.getElementById("user").value;
       const p = document.getElementById("pass").value;
       if (u === USER && p === PASS) {
         document.getElementById("login").style.display = "none";
         document.getElementById("panel").style.display = "block";
-        refreshStatus();
+        reloadStatus();
       } else {
         alert("неверный логин или пароль");
       }
     }
 
     function getState() {
+      if (CLOUD) return cloud.state;
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return null;
       try {
@@ -158,27 +208,63 @@
       }
     }
 
-    function saveState(st) {
+    // сохранить состояние (на сервер в Telegram, иначе локально)
+    async function saveState(st, silent) {
+      if (CLOUD) {
+        try {
+          const r = await api({ action: 'save', baseRev: cloud.rev, state: st, extra: cloud.extra });
+          if (r.status === 409) {
+            await loadCloud();
+            refreshStatus();
+            alert("пока ты редактировал, прогресс на сервере изменился (игра сохранила тапы). данные обновлены — нажми ещё раз");
+            return;
+          }
+          if (!r.ok) throw new Error('save ' + r.status);
+          cloud.state = st;
+          cloud.rev = r.data.rev;
+          if (!silent) alert("сохранено! откройте игру — изменения подтянутся на всех устройствах");
+          refreshStatus();
+        } catch (e) {
+          alert("ошибка при сохранении: " + (e && e.message ? e.message : e));
+        }
+        return;
+      }
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(st));
-        alert("сохранено!");
+        if (!silent) alert("сохранено!");
         refreshStatus();
       } catch (e) {
         alert("ошибка при сохранении: " + (e && e.message ? e.message : e));
       }
     }
 
-    // Сохранение без всплывающего уведомления для плавности работы тумблера
-    function saveStateSilent(st) {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(st));
-        refreshStatus();
-      } catch (e) {
-        alert("ошибка при сохранении: " + (e && e.message ? e.message : e));
+    // единый шаблон действия: свежие данные -> изменить -> сохранить
+    async function act(mutate, silent) {
+      if (CLOUD) {
+        const ok = await loadCloud();
+        if (!ok) return alert("нет сохранений (сначала открой игру в этом боте хотя бы один раз)");
       }
+      const st = getState();
+      if (!st) return alert("нет сохранений");
+      const res = mutate(st);
+      if (res === false) return;
+      await saveState(st, silent);
+    }
+
+    async function reloadStatus() {
+      if (CLOUD) await loadCloud();
+      refreshStatus();
     }
 
     function refreshStatus() {
+      const modeEl = document.getElementById('mode');
+      if (CLOUD && cloud.loaded) {
+        const u = (tg.initDataUnsafe && tg.initDataUnsafe.user) || {};
+        modeEl.textContent = 'режим: синхронизация с Telegram' + (u.id ? ' (id ' + u.id + ')' : '');
+      } else if (!CLOUD) {
+        modeEl.textContent = 'режим: локально (вне Telegram)';
+      }
+
       const st = getState();
       const coinsEl = document.getElementById("curCoins");
       const diamondsEl = document.getElementById("curDiamonds");
@@ -215,88 +301,73 @@
     }
 
     function setCoins() {
-      const st = getState();
-      if (!st) return alert("нет сохранений");
       const val = parseInt(document.getElementById("coins").value, 10);
       if (isNaN(val)) return alert("введи корректное число");
-      st.total = Math.max(0, val);
-      saveState(st);
+      act(st => { st.total = Math.max(0, val); });
     }
 
     function addCoins() {
-      const st = getState();
-      if (!st) return alert("нет сохранений");
       const add = parseInt(document.getElementById("coins").value, 10);
       if (isNaN(add)) return alert("введи корректное число");
-      st.total = (Number(st.total) || 0) + add;
-      if (st.total < 0) st.total = 0;
-      saveState(st);
+      act(st => {
+        st.total = (Number(st.total) || 0) + add;
+        if (st.total < 0) st.total = 0;
+      });
     }
 
     function setDiamonds() {
-      const st = getState();
-      if (!st) return alert("нет сохранений");
-      ensureDiamondsField(st);
       const val = parseInt(document.getElementById("diamonds").value, 10);
       if (isNaN(val)) return alert("введи корректное число");
-      st.diamonds.total = Math.max(0, val);
-      if(!st.diamonds.lastTs) st.diamonds.lastTs = Date.now();
-      saveState(st);
+      act(st => {
+        ensureDiamondsField(st);
+        st.diamonds.total = Math.max(0, val);
+        if (!st.diamonds.lastTs) st.diamonds.lastTs = Date.now();
+      });
     }
 
     function addDiamonds() {
-      const st = getState();
-      if (!st) return alert("нет сохранений");
-      ensureDiamondsField(st);
       const add = parseInt(document.getElementById("diamonds").value, 10);
       if (isNaN(add)) return alert("введи корректное число");
-      st.diamonds.total = (Number(st.diamonds.total) || 0) + add;
-      if (st.diamonds.total < 0) st.diamonds.total = 0;
-      if(!st.diamonds.lastTs) st.diamonds.lastTs = Date.now();
-      saveState(st);
+      act(st => {
+        ensureDiamondsField(st);
+        st.diamonds.total = (Number(st.diamonds.total) || 0) + add;
+        if (st.diamonds.total < 0) st.diamonds.total = 0;
+        if (!st.diamonds.lastTs) st.diamonds.lastTs = Date.now();
+      });
     }
 
     function setClickBonus() {
-      const st = getState();
-      if (!st) return alert("нет сохранений");
       const val = parseInt(document.getElementById("clickBonus").value, 10);
       if (isNaN(val)) return alert("введи корректное число");
-      st.bonus = val;
-      saveState(st);
+      act(st => { st.bonus = val; });
     }
 
     function addClickBonus() {
-      const st = getState();
-      if (!st) return alert("нет сохранений");
       const add = parseInt(document.getElementById("clickBonus").value, 10);
       if (isNaN(add)) return alert("введи корректное число");
-      st.bonus = (Number(st.bonus) || 0) + add;
-      saveState(st);
+      act(st => { st.bonus = (Number(st.bonus) || 0) + add; });
     }
 
     function maxBoost() {
-      const st = getState();
-      if (!st) return alert("нет сохранений");
-      if (!st.upgrades || typeof st.upgrades !== 'object') st.upgrades = {};
-      st.upgrades.plus20 = true;
-      st.upgrades.miniBoost = true;
-      if(!st.multiclick || typeof st.multiclick !== 'object') st.multiclick = { totalBonus: 0, currentTier: 0, purchasesInTier: 0 };
-      st.multiclick.totalBonus = Math.max(0, Number(st.multiclick.totalBonus) || 0) + 999999;
-      if(!st.passive || typeof st.passive !== 'object') st.passive = { level:0, lastTs: Date.now() };
-      st.passive.level = Math.max(st.passive.level || 0, 15);
-      saveState(st);
+      act(st => {
+        if (!st.upgrades || typeof st.upgrades !== 'object') st.upgrades = {};
+        st.upgrades.plus20 = true;
+        st.upgrades.miniBoost = true;
+        if (!st.multiclick || typeof st.multiclick !== 'object') st.multiclick = { totalBonus: 0, currentTier: 0, purchasesInTier: 0 };
+        st.multiclick.totalBonus = Math.max(0, Number(st.multiclick.totalBonus) || 0) + 999999;
+        if (!st.passive || typeof st.passive !== 'object') st.passive = { level: 0, lastTs: Date.now() };
+        st.passive.level = Math.max(st.passive.level || 0, 15);
+      });
     }
 
     // Изменение статуса автофарма
     function toggleHoldToTap() {
-      const st = getState();
-      if (!st) return alert("нет сохранений");
-      st.holdToTap = document.getElementById("holdToTapToggle").checked;
-      saveStateSilent(st);
+      const checked = document.getElementById("holdToTapToggle").checked;
+      act(st => { st.holdToTap = checked; }, true);
     }
 
     // сброс прогресса
-    function resetState() {
+    async function resetState() {
       const ok = confirm("точно сбросить прогресс? это действие удалит монеты, алмазы, апгрейды и вернёт игру к начальным значениям.");
       if (!ok) return;
       const defaultState = {
@@ -312,6 +383,15 @@
         multiclick: { totalBonus: 0, currentTier: 0, purchasesInTier: 0 },
         holdToTap: false
       };
+      if (CLOUD) {
+        await loadCloud(); // нужен актуальный номер версии
+        const prev = cloud.state;
+        if (prev && prev.nickname) defaultState.nickname = prev.nickname;
+        if (prev && prev.nickOverride) defaultState.nickOverride = prev.nickOverride;
+        await saveState(defaultState, true);
+        alert("прогресс сброшен");
+        return;
+      }
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultState));
         alert("прогресс сброшен");
@@ -329,46 +409,47 @@
     }
 
     function burnCoins() {
-      const st = getState();
-      if (!st) return alert("нет сохранений");
       const amount = getPositiveIntFrom('burnAmount');
       if (isNaN(amount)) return alert("введи корректное целое число для сжигания");
       if (amount <= 0) return alert("введите число больше нуля");
-      const current = Number(st.total || 0);
-      if (current <= 0) return alert("баланс уже равен 0");
-      if (!confirm(`подтвердите сжигание ${amount.toLocaleString('ru-RU')} монет. Это действие необратимо.`)) return;
-      st.total = Math.max(0, current - amount);
-      saveState(st);
+      act(st => {
+        const current = Number(st.total || 0);
+        if (current <= 0) { alert("баланс уже равен 0"); return false; }
+        if (!confirm(`подтвердите сжигание ${amount.toLocaleString('ru-RU')} монет. Это действие необратимо.`)) return false;
+        st.total = Math.max(0, current - amount);
+      });
     }
 
     function burnAll() {
-      const st = getState();
-      if (!st) return alert("нет сохранений");
-      const current = Number(st.total || 0);
-      if (current <= 0) return alert("баланс уже равен 0");
-      if (!confirm(`подтвердите сжигание ВСЕХ монет (${current.toLocaleString('ru-RU')}). Это действие необратимо.`)) return;
-      st.total = 0;
-      saveState(st);
+      act(st => {
+        const current = Number(st.total || 0);
+        if (current <= 0) { alert("баланс уже равен 0"); return false; }
+        if (!confirm(`подтвердите сжигание ВСЕХ монет (${current.toLocaleString('ru-RU')}). Это действие необратимо.`)) return false;
+        st.total = 0;
+      });
     }
 
     function setNickname() {
-      const st = getState();
-      if (!st) return alert("нет сохранений");
       const val = document.getElementById("newNick").value;
       if (!val) return alert("введите ник");
-      st.nickname = val;
-      saveState(st);
+      act(st => {
+        st.nickname = val;
+        st.nickOverride = true; // игра не будет подменять ник на телеграмный
+      });
     }
 
     function resetNickname() {
-      const st = getState();
-      if (!st) return alert("нет сохранений");
-      st.nickname = 'telegram_nik';
-      saveState(st);
+      act(st => {
+        st.nickname = 'telegram_nik';
+        st.nickOverride = false; // игра снова возьмёт ник из Telegram
+      });
     }
 
-    (function tryAutoRefresh(){
-      try { refreshStatus(); } catch(e) {}
+    (async function start(){
+      try {
+        if (CLOUD) await loadCloud();
+        refreshStatus();
+      } catch(e) {}
     })();
 </script>
 </body>
