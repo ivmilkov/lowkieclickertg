@@ -3,7 +3,9 @@ import { getStore } from '@netlify/blobs';
 
 const MAX_BODY = 600_000;           // символов в JSON сохранения
 const MAX_AUTH_AGE = 3 * 24 * 3600; // initData старше 3 суток не принимаем
-const TOP_SIZE = 50;                // сколько игроков в таблице лидеров
+// Telegram id админов. Можно переопределить переменной ADMIN_IDS на Netlify (через запятую)
+const ADMIN_IDS = (process.env.ADMIN_IDS || '8165411879').split(',').map(s => s.trim()).filter(Boolean);
+const TOP_SIZE = 50;               // сколько игроков в таблице лидеров
 const LB_UPDATE_EVERY = 30_000;     // не чаще раза в 30 сек на игрока обновляем таблицу
 
 const json = (obj, status = 200) =>
@@ -87,6 +89,11 @@ export default async (req) => {
   const user = verifyInitData(body.initData, botToken);
   if (!user) return json({ error: 'unauthorized' }, 401);
 
+  // проверка прав админа (по подписанному Telegram id, подделать нельзя)
+  if (body.action === 'whoami') {
+    return json({ isAdmin: ADMIN_IDS.includes(String(user.id)) });
+  }
+
   // strong: читаем всегда свежую запись, а не устаревшую копию
   const store = getStore({ name: 'players', consistency: 'strong' });
   const lb = getStore({ name: 'leaderboard', consistency: 'strong' });
@@ -98,7 +105,21 @@ export default async (req) => {
   }
 
   if (body.action === 'top') {
-    const top = (await lb.get('top', { type: 'json' })) || { entries: {} };
+    let top = (await lb.get('top', { type: 'json' })) || { entries: {} };
+
+    // игрок уже есть на сервере, но ещё не в таблице (например, не сохранялся после обновления) — добавим его
+    if (current && current.state && !(top.entries && top.entries[String(user.id)])) {
+      const t = Math.floor(Number(current.state.total));
+      if (Number.isFinite(t) && t >= 0) {
+        try {
+          await updateTop(lb, String(user.id), displayName(user), t);
+          top = (await lb.get('top', { type: 'json' })) || { entries: {} };
+        } catch (e) {
+          console.error('leaderboard self-heal failed', e);
+        }
+      }
+    }
+
     const list = Object.entries(top.entries || {})
       .sort((a, b) => b[1].t - a[1].t)
       .slice(0, TOP_SIZE)
