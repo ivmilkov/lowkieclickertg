@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>админ панель</title>
+<style>
+    body { font-family:Inter, ui-sans-serif, system-ui, -apple-system,"Segoe UI",Roboto,Arial; background:#0f1724; color:#fff; text-align:center; padding:24px; }
+    input, button { padding:10px; margin:8px; border-radius:8px; border:none; font-size:14px; }
+    button { cursor:pointer; background:#ffd166; font-weight:bold; }
+    #panel { display:none; margin-top:16px; }
+    .row { margin:8px 0; }
+    .small { color:#9aa6b2; font-size:13px; }
+    #status { margin-bottom:10px; color:#fff; }
+    .danger { background:#ff6b6b; color:#071226; }
+    .muted { color:#9aa6b2; font-size:13px; display:block; margin-top:6px; }
+
+    /* Стиль только для тумблера автофарма */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 50px;
+      height: 26px;
+      vertical-align: middle;
+      margin: 0 10px;
+    }
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #2a3547;
+      transition: .4s;
+      border-radius: 34px;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 4px;
+      bottom: 4px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    }
+    input:checked + .slider {
+      background-color: #ffd166;
+    }
+    input:checked + .slider:before {
+      transform: translateX(24px);
+    }
+</style>
+</head>
+<body>
+  <h2>админ панель</h2>
+
+  <div id="login">
+    <input type="text" id="user" placeholder="имя пользователя"><br>
+    <input type="password" id="pass" placeholder="пароль"><br>
+    <button onclick="login()">войти</button>
+  </div>
+
+  <div id="panel">
+    <div id="status">
+      текущее: <span id="curCoins">—</span> монет, <span id="curDiamonds">—</span> алмазов
+    </div>
+
+    <div class="row">
+      <h3>монеты</h3>
+      <input type="number" id="coins" placeholder="число монет"><br>
+      <button onclick="setCoins()">установить баланс</button>
+      <button onclick="addCoins()">добавить к балансу</button>
+    </div>
+
+    <div class="row">
+      <h3>сжечь монеты (сжигаловка)</h3>
+      <input type="number" id="burnAmount" placeholder="сколько сжечь (целое число)"><br>
+      <button onclick="burnCoins()">сжечь</button>
+    </div>
+
+    <div class="row">
+      <h3>алмазы</h3>
+      <input type="number" id="diamonds" placeholder="число алмазов"><br>
+      <button onclick="setDiamonds()">установить баланс</button>
+      <button onclick="addDiamonds()">добавить к балансу</button>
+    </div>
+
+    <div class="row">
+      <h3>бонус за клик</h3>
+      <input type="number" id="clickBonus" placeholder="бонус за клик"><br>
+      <button onclick="setClickBonus()">установить</button>
+      <button onclick="addClickBonus()">добавить</button>
+    </div>
+
+    <div class="row">
+      <h3>бусты</h3>
+      <button onclick="maxBoost()">открыть все бусты</button>
+    </div>
+
+    <div class="row">
+      <h3>никнейм игрока</h3>
+      <input type="text" id="newNick" placeholder="новый ник"><br>
+      <button onclick="setNickname()">изменить ник</button>
+      <button onclick="resetNickname()">вернуть стандартный</button>
+    </div>
+
+    <div class="row">
+      <h3>сброс</h3>
+      <div class="small">сбросит весь прогресс игры (монеты, алмазы, апгрейды, энергия и т.д.) к стандартным значениям.</div>
+      <button class="danger" onclick="resetState()">сбросить прогресс</button>
+    </div>
+
+    <!-- БЛОК: Настройки автофарма -->
+    <div class="row">
+      <h3>автофарм (клики по зажатию)</h3>
+      <span class="muted">при зажатии/ведении по картинке монеты будут автоматически фармиться</span>
+      <div style="margin: 10px 0;">
+        <span class="small">выкл</span>
+        <label class="switch">
+          <input type="checkbox" id="holdToTapToggle" onchange="toggleHoldToTap()">
+          <span class="slider"></span>
+        </label>
+        <span class="small" style="color: #ffd166;">вкл</span>
+      </div>
+    </div>
+  </div>
+
+<script>
+    const USER = "adminivmil";
+    const PASS = "pkZnlmwmjRZzlu";
+    const STORAGE_KEY = "lowkie_clicker_v2";
+
+    // вход
+    function login() {
+      const u = document.getElementById("user").value;
+      const p = document.getElementById("pass").value;
+      if (u === USER && p === PASS) {
+        document.getElementById("login").style.display = "none";
+        document.getElementById("panel").style.display = "block";
+        refreshStatus();
+      } else {
+        alert("неверный логин или пароль");
+      }
+    }
+
+    function getState() {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      try {
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function saveState(st) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(st));
+        alert("сохранено!");
+        refreshStatus();
+      } catch (e) {
+        alert("ошибка при сохранении: " + (e && e.message ? e.message : e));
+      }
+    }
+
+    // Сохранение без всплывающего уведомления для плавности работы тумблера
+    function saveStateSilent(st) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(st));
+        refreshStatus();
+      } catch (e) {
+        alert("ошибка при сохранении: " + (e && e.message ? e.message : e));
+      }
+    }
+
+    function refreshStatus() {
+      const st = getState();
+      const coinsEl = document.getElementById("curCoins");
+      const diamondsEl = document.getElementById("curDiamonds");
+      if (!st) {
+        coinsEl.textContent = "нет";
+        diamondsEl.textContent = "нет";
+        return;
+      }
+      const coins = Number(st.total || 0);
+      const diamonds = Number((st.diamonds && st.diamonds.total) || 0);
+      try {
+        coinsEl.textContent = coins.toLocaleString('ru-RU');
+        diamondsEl.textContent = diamonds.toLocaleString('ru-RU');
+      } catch (e) {
+        coinsEl.textContent = String(coins);
+        diamondsEl.textContent = String(diamonds);
+      }
+
+      // Обновляем состояние тумблера автофарма в зависимости от БД
+      const toggle = document.getElementById("holdToTapToggle");
+      if (toggle) {
+        toggle.checked = !!st.holdToTap;
+      }
+    }
+
+    function ensureDiamondsField(st){
+      if (!st.diamonds || typeof st.diamonds !== 'object') {
+        st.diamonds = { total: 0, lastTs: Date.now(), upgrades: {} };
+      } else {
+        if (typeof st.diamonds.total !== 'number') st.diamonds.total = Number(st.diamonds.total) || 0;
+        if (!('lastTs' in st.diamonds) || !st.diamonds.lastTs) st.diamonds.lastTs = Date.now();
+        if (!st.diamonds.upgrades || typeof st.diamonds.upgrades !== 'object') st.diamonds.upgrades = {};
+      }
+    }
+
+    function setCoins() {
+      const st = getState();
+      if (!st) return alert("нет сохранений");
+      const val = parseInt(document.getElementById("coins").value, 10);
+      if (isNaN(val)) return alert("введи корректное число");
+      st.total = Math.max(0, val);
+      saveState(st);
+    }
+
+    function addCoins() {
+      const st = getState();
+      if (!st) return alert("нет сохранений");
+      const add = parseInt(document.getElementById("coins").value, 10);
+      if (isNaN(add)) return alert("введи корректное число");
+      st.total = (Number(st.total) || 0) + add;
+      if (st.total < 0) st.total = 0;
+      saveState(st);
+    }
+
+    function setDiamonds() {
+      const st = getState();
+      if (!st) return alert("нет сохранений");
+      ensureDiamondsField(st);
+      const val = parseInt(document.getElementById("diamonds").value, 10);
+      if (isNaN(val)) return alert("введи корректное число");
+      st.diamonds.total = Math.max(0, val);
+      if(!st.diamonds.lastTs) st.diamonds.lastTs = Date.now();
+      saveState(st);
+    }
+
+    function addDiamonds() {
+      const st = getState();
+      if (!st) return alert("нет сохранений");
+      ensureDiamondsField(st);
+      const add = parseInt(document.getElementById("diamonds").value, 10);
+      if (isNaN(add)) return alert("введи корректное число");
+      st.diamonds.total = (Number(st.diamonds.total) || 0) + add;
+      if (st.diamonds.total < 0) st.diamonds.total = 0;
+      if(!st.diamonds.lastTs) st.diamonds.lastTs = Date.now();
+      saveState(st);
+    }
+
+    function setClickBonus() {
+      const st = getState();
+      if (!st) return alert("нет сохранений");
+      const val = parseInt(document.getElementById("clickBonus").value, 10);
+      if (isNaN(val)) return alert("введи корректное число");
+      st.bonus = val;
+      saveState(st);
+    }
+
+    function addClickBonus() {
+      const st = getState();
+      if (!st) return alert("нет сохранений");
+      const add = parseInt(document.getElementById("clickBonus").value, 10);
+      if (isNaN(add)) return alert("введи корректное число");
+      st.bonus = (Number(st.bonus) || 0) + add;
+      saveState(st);
+    }
+
+    function maxBoost() {
+      const st = getState();
+      if (!st) return alert("нет сохранений");
+      if (!st.upgrades || typeof st.upgrades !== 'object') st.upgrades = {};
+      st.upgrades.plus20 = true;
+      st.upgrades.miniBoost = true;
+      if(!st.multiclick || typeof st.multiclick !== 'object') st.multiclick = { totalBonus: 0, currentTier: 0, purchasesInTier: 0 };
+      st.multiclick.totalBonus = Math.max(0, Number(st.multiclick.totalBonus) || 0) + 999999;
+      if(!st.passive || typeof st.passive !== 'object') st.passive = { level:0, lastTs: Date.now() };
+      st.passive.level = Math.max(st.passive.level || 0, 15);
+      saveState(st);
+    }
+
+    // Изменение статуса автофарма
+    function toggleHoldToTap() {
+      const st = getState();
+      if (!st) return alert("нет сохранений");
+      st.holdToTap = document.getElementById("holdToTapToggle").checked;
+      saveStateSilent(st);
+    }
+
+    // сброс прогресса
+    function resetState() {
+      const ok = confirm("точно сбросить прогресс? это действие удалит монеты, алмазы, апгрейды и вернёт игру к начальным значениям.");
+      if (!ok) return;
+      const defaultState = {
+        total: 0,
+        bonus: 0,
+        upgrades: { plus20: false, miniBoost: false },
+        skins: { owned: {}, equipped: null },
+        diamonds: { total: 0, lastTs: Date.now(), upgrades: {} },
+        passive: { level: 0, lastTs: Date.now() },
+        energyCurrent: 100,
+        lastEnergyRegen: Date.now(),
+        lastTapTs: 0,
+        multiclick: { totalBonus: 0, currentTier: 0, purchasesInTier: 0 },
+        holdToTap: false
+      };
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultState));
+        alert("прогресс сброшен");
+        refreshStatus();
+      } catch (e) {
+        alert("ошибка при сбросе: " + (e && e.message ? e.message : e));
+      }
+    }
+
+    function getPositiveIntFrom(id) {
+      const raw = document.getElementById(id).value;
+      const v = parseInt(raw, 10);
+      if (isNaN(v)) return NaN;
+      return Math.max(0, v);
+    }
+
+    function burnCoins() {
+      const st = getState();
+      if (!st) return alert("нет сохранений");
+      const amount = getPositiveIntFrom('burnAmount');
+      if (isNaN(amount)) return alert("введи корректное целое число для сжигания");
+      if (amount <= 0) return alert("введите число больше нуля");
+      const current = Number(st.total || 0);
+      if (current <= 0) return alert("баланс уже равен 0");
+      if (!confirm(`подтвердите сжигание ${amount.toLocaleString('ru-RU')} монет. Это действие необратимо.`)) return;
+      st.total = Math.max(0, current - amount);
+      saveState(st);
+    }
+
+    function burnAll() {
+      const st = getState();
+      if (!st) return alert("нет сохранений");
+      const current = Number(st.total || 0);
+      if (current <= 0) return alert("баланс уже равен 0");
+      if (!confirm(`подтвердите сжигание ВСЕХ монет (${current.toLocaleString('ru-RU')}). Это действие необратимо.`)) return;
+      st.total = 0;
+      saveState(st);
+    }
+
+    function setNickname() {
+      const st = getState();
+      if (!st) return alert("нет сохранений");
+      const val = document.getElementById("newNick").value;
+      if (!val) return alert("введите ник");
+      st.nickname = val;
+      saveState(st);
+    }
+
+    function resetNickname() {
+      const st = getState();
+      if (!st) return alert("нет сохранений");
+      st.nickname = 'telegram_nik';
+      saveState(st);
+    }
+
+    (function tryAutoRefresh(){
+      try { refreshStatus(); } catch(e) {}
+    })();
+</script>
+</body>
+</html>
