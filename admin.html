@@ -62,11 +62,7 @@
   <h2>админ панель</h2>
   <div id="mode">загрузка…</div>
 
-  <div id="login">
-    <input type="text" id="user" placeholder="имя пользователя"><br>
-    <input type="password" id="pass" placeholder="пароль"><br>
-    <button onclick="login()">войти</button>
-  </div>
+  <div id="denied" style="display:none; color:#ff6b6b; margin-top:20px;"></div>
 
   <div id="panel">
     <div id="status">
@@ -135,8 +131,6 @@
   </div>
 
 <script>
-    const USER = "adminivmil";
-    const PASS = "pkZnlmwmjRZzlu";
     const STORAGE_KEY = "lowkie_clicker_v2";
 
     // ---------- режим: синхронизация с Telegram или локально ----------
@@ -183,17 +177,11 @@
       }
     }
 
-    // ---------- вход ----------
-    function login() {
-      const u = document.getElementById("user").value;
-      const p = document.getElementById("pass").value;
-      if (u === USER && p === PASS) {
-        document.getElementById("login").style.display = "none";
-        document.getElementById("panel").style.display = "block";
-        reloadStatus();
-      } else {
-        alert("неверный логин или пароль");
-      }
+    function deny(text) {
+      document.getElementById('mode').textContent = '';
+      const d = document.getElementById('denied');
+      d.textContent = text;
+      d.style.display = 'block';
     }
 
     function getState() {
@@ -447,9 +435,25 @@
 
     (async function start(){
       try {
-        if (CLOUD) await loadCloud();
+        if (!CLOUD) {
+          deny('открой админку через Telegram (в боте)');
+          return;
+        }
+        const w = await api({ action: 'whoami' });
+        if (!w.ok) {
+          deny('не удалось проверить доступ, попробуй позже');
+          return;
+        }
+        if (!w.data.isAdmin) {
+          deny('доступ запрещён');
+          return;
+        }
+        document.getElementById('panel').style.display = 'block';
+        await loadCloud();
         refreshStatus();
-      } catch(e) {}
+      } catch(e) {
+        deny('ошибка загрузки админки');
+      }
     })();
 </script>
 </body>
