@@ -805,7 +805,7 @@ export default async (req) => {
             refs.list = refs.list.slice(0, REF_LIST_MAX);
             inv.state.refs = refs;
             addCoins(inv.state, REF_COINS);
-            pushHistory(inv.state, 'Реферальная система: новый друг в игре', REF_AMOUNT);
+            pushHistory(inv.state, 'Новый реферал, REF_AMOUNT);
             inv.rev = (inv.rev || 0) + 1;
             inv.deviceId = 'referral';
             inv.updatedAt = now;
