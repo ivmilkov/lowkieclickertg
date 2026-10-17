@@ -515,6 +515,48 @@ export default async (req) => {
       return json({ summary: summary(rec), state: rec.state });
     }
 
+    if (body.action === 'admin_update' && body.act === 'resetAsNew') {
+      // полный сброс «как нового игрока»: прогресс и друзья обнуляются, а по реферальной ссылке снова можно получить награду (для тестов)
+      const now = Date.now();
+      try {
+        const old = await refStore.get(`r_${tid}`, { type: 'json' });
+        if (old && old.by && old.done) {          // приглашавшему убираем этого друга из счётчика (монеты остаются у него)
+          const invKey = `u_${old.by.id}`;
+          const inv = await store.get(invKey, { type: 'json' });
+          if (inv && inv.state) {
+            const refs = sanitizeRefs(inv.state.refs);
+            if (refs.list.some(x => String(x.id) === tid)) {
+              refs.list = refs.list.filter(x => String(x.id) !== tid);
+              refs.count = Math.max(0, refs.count - 1);
+              refs.units = Math.max(0, refs.units - 1);
+              inv.state.refs = refs;
+              inv.rev = (inv.rev || 0) + 1; inv.deviceId = 'referral'; inv.updatedAt = now;
+              await store.setJSON(invKey, inv);
+            }
+          }
+        }
+        await refStore.delete(`r_${tid}`);
+      } catch (e) { console.error('ref reset failed', e); }
+      const keepNick = rec.state.nickname, keepOverride = rec.state.nickOverride;
+      rec.state = {
+        total: 0, bonus: 0,
+        upgrades: { plus20: false, miniBoost: false },
+        skins: { owned: {}, equipped: null },
+        diamonds: { total: 0, lastTs: now, upgrades: {} },
+        passive: { level: 0, lastTs: now },
+        energyCurrent: 100, lastEnergyRegen: now, lastTapTs: 0,
+        multiclick: { totalBonus: 0, currentTier: 0, purchasesInTier: 0 },
+        holdToTap: false
+      };
+      if (keepNick) rec.state.nickname = keepNick;
+      if (keepOverride) rec.state.nickOverride = keepOverride;
+      rec.refReset = true;
+      rec.rev = (rec.rev || 0) + 1; rec.deviceId = 'admin'; rec.updatedAt = now;
+      await store.setJSON(tkey, rec);
+      try { await updateTop(lb, tid, rec.name || 'Игрок', 0, safePhoto(rec.photoUrl)); } catch (e) {}
+      return json({ ok: true, summary: summary(rec), state: rec.state });
+    }
+
     if (body.action === 'admin_update') {
       const err = applyAdminAction(rec.state, body.act, body.value);
       if (err) return json({ error: err }, 400);
@@ -645,7 +687,7 @@ export default async (req) => {
   }
 
   if (body.action === 'load') {
-    if (!current) { try { await ensureRefMarker(refStore, store, user, body.hadProgress === true); } catch (e) { console.error('ref marker failed', e); } }
+    if (!current || (current.refReset && body.hadProgress !== true)) { try { await ensureRefMarker(refStore, store, user, body.hadProgress === true); } catch (e) { console.error('ref marker failed', e); } }
     return json({ exists: !!current, record: publicRecord(current) || null });
   }
 
@@ -704,7 +746,7 @@ export default async (req) => {
     let refMarker = null;
     if (current && current.state && current.state.refs) st.refs = sanitizeRefs(current.state.refs);
     else delete st.refs;
-    if (!current) {
+    if (!current || current.refReset) {
       try { refMarker = await ensureRefMarker(refStore, store, user, false); } catch (e) { console.error('ref marker failed', e); }
       if (refMarker && (!refMarker.by || refMarker.done)) refMarker = null;
     }
