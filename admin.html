@@ -109,14 +109,7 @@
         <div class="arr">›</div>
       </button>
     </div>
-    
-      <div id="homeCard" class="box" style="display:none">
-        <h3 id="homeTitle">—</h3>
-        <div id="homeInfo" class="info"></div>
-        <button onclick="goBoost()">💰 накрутить этому игроку</button>
-      </div>
-    </div>
-  
+
     <!-- ============ ГЛАВНАЯ: только просмотр ============ -->
     <div id="page-home" class="page">
       <div class="stats">
@@ -130,6 +123,13 @@
         <div><button class="ghost" onclick="loadPlayers()">🔄 обновить список</button></div>
         <div id="listHome" class="plist"></div>
       </div>
+
+      <div id="homeCard" class="box" style="display:none">
+        <h3 id="homeTitle">—</h3>
+        <div id="homeInfo" class="info"></div>
+        <button onclick="goBoost()">💰 накрутить этому игроку</button>
+      </div>
+    </div>
 
     <!-- ============ НАКРУТКА: все правки ============ -->
     <div id="page-boost" class="page">
