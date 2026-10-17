@@ -303,7 +303,7 @@ async function tgSend(chatId, text, buttonText, buttonUrl) {
   } catch (e) { /* уведомление необязательное */ }
 }
 const notifyAdmins = (origin, text) =>
-  Promise.all(ADMIN_IDS.map(id => tgSend(id, text, '🎫 Открыть тикеты', origin + '/admin.html?tab=tickets')));
+  Promise.all(ADMIN_IDS.map(id => tgSend(id, text, 'открыть тикеты', origin + '/admin.html?tab=tickets')));
 
 export default async (req) => {
   if (req.method !== 'POST') return json({ error: 'method' }, 405);
@@ -435,7 +435,7 @@ export default async (req) => {
         t.status = body.close ? 'closed' : 'answered';
         t.unreadUser = true; t.unreadAdmin = false; t.updatedAt = now;
         await tkStore.setJSON(k, t);
-        await tgSend(Number(tuid), `💬 Ответ поддержки на обращение «${t.subject}»:\n\n${text}`, '🎮 Открыть игру', origin + '/');
+        await tgSend(Number(tuid), `ответ поддержки на обращение «${t.subject}»:\n\n${text}`);
         return json({ ok: true, ticket: ticketForAdmin(t) });
       }
       if (body.action === 'admin_ticket_status') {
@@ -506,7 +506,7 @@ export default async (req) => {
         messages: [{ from: 'user', text: message, ts: now }]
       };
       await tkStore.setJSON(tKey(uid, t.id), t);
-      await notifyAdmins(origin, `🆘 Новое обращение в поддержку\n${t.name}${t.username ? ' (@' + t.username + ')' : ''}\n«${subject}»\n\n${message.slice(0, 600)}`);
+      await notifyAdmins(origin, `новое обращение в поддержку\n${t.name}${t.username ? ' (@' + t.username + ')' : ''}\n«${subject}»\n\n${message.slice(0, 600)}`);
       return json({ ok: true, id: t.id });
     }
 
