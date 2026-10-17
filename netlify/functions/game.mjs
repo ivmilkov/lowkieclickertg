@@ -52,6 +52,94 @@ function displayName(user) {
   return name.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 40);
 }
 
+// ---------- админские действия над прогрессом игрока ----------
+const MAX_VALUE = 1e15;
+
+function ensureDiamonds(st) {
+  if (!st.diamonds || typeof st.diamonds !== 'object') st.diamonds = { total: 0, lastTs: Date.now(), upgrades: {} };
+  if (typeof st.diamonds.total !== 'number') st.diamonds.total = Number(st.diamonds.total) || 0;
+  if (!st.diamonds.lastTs) st.diamonds.lastTs = Date.now();
+  if (!st.diamonds.upgrades || typeof st.diamonds.upgrades !== 'object') st.diamonds.upgrades = {};
+}
+
+// возвращает строку с кодом ошибки или null, если всё применено
+function applyAdminAction(st, act, value) {
+  const intActs = ['setCoins', 'addCoins', 'burnCoins', 'setDiamonds', 'addDiamonds', 'setClickBonus', 'addClickBonus'];
+  let n = 0;
+  if (intActs.includes(act)) {
+    n = Math.trunc(Number(value));
+    if (!Number.isFinite(n) || Math.abs(n) > MAX_VALUE) return 'bad_value';
+  }
+  const coins = () => Number(st.total) || 0;
+  const dia = () => Number(st.diamonds && st.diamonds.total) || 0;
+
+  switch (act) {
+    case 'setCoins': st.total = Math.max(0, n); return null;
+    case 'addCoins': st.total = Math.min(MAX_VALUE, Math.max(0, coins() + n)); return null;
+    case 'burnCoins':
+      if (n <= 0) return 'bad_value';
+      st.total = Math.max(0, coins() - n); return null;
+    case 'setDiamonds': ensureDiamonds(st); st.diamonds.total = Math.max(0, n); return null;
+    case 'addDiamonds': ensureDiamonds(st); st.diamonds.total = Math.min(MAX_VALUE, Math.max(0, dia() + n)); return null;
+    case 'setClickBonus': st.bonus = n; return null;
+    case 'addClickBonus': st.bonus = Math.max(-MAX_VALUE, Math.min(MAX_VALUE, (Number(st.bonus) || 0) + n)); return null;
+    case 'maxBoost':
+      if (!st.upgrades || typeof st.upgrades !== 'object') st.upgrades = {};
+      st.upgrades.plus20 = true;
+      st.upgrades.miniBoost = true;
+      if (!st.multiclick || typeof st.multiclick !== 'object') st.multiclick = { totalBonus: 0, currentTier: 0, purchasesInTier: 0 };
+      st.multiclick.totalBonus = Math.max(0, Number(st.multiclick.totalBonus) || 0) + 999999;
+      if (!st.passive || typeof st.passive !== 'object') st.passive = { level: 0, lastTs: Date.now() };
+      st.passive.level = Math.max(st.passive.level || 0, 15);
+      return null;
+    case 'setNickname': {
+      const s = String(value || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 40);
+      if (!s) return 'bad_value';
+      st.nickname = s;
+      st.nickOverride = true;
+      return null;
+    }
+    case 'resetNickname': st.nickname = 'telegram_nik'; st.nickOverride = false; return null;
+    case 'holdToTap': st.holdToTap = !!value; return null;
+    case 'resetState': {
+      const keepNick = st.nickname, keepOverride = st.nickOverride;
+      for (const k of Object.keys(st)) delete st[k];
+      Object.assign(st, {
+        total: 0,
+        bonus: 0,
+        upgrades: { plus20: false, miniBoost: false },
+        skins: { owned: {}, equipped: null },
+        diamonds: { total: 0, lastTs: Date.now(), upgrades: {} },
+        passive: { level: 0, lastTs: Date.now() },
+        energyCurrent: 100,
+        lastEnergyRegen: Date.now(),
+        lastTapTs: 0,
+        multiclick: { totalBonus: 0, currentTier: 0, purchasesInTier: 0 },
+        holdToTap: false
+      });
+      if (keepNick) st.nickname = keepNick;
+      if (keepOverride) st.nickOverride = keepOverride;
+      return null;
+    }
+    default: return 'unknown_act';
+  }
+}
+
+// краткая сводка по игроку для списка
+function summary(rec) {
+  const st = rec.state || {};
+  return {
+    id: String(rec.tgId),
+    username: rec.username || null,
+    name: rec.name || rec.firstName || null,
+    nickname: st.nickname || null,
+    total: Math.floor(Number(st.total) || 0),
+    diamonds: Math.floor(Number(st.diamonds && st.diamonds.total) || 0),
+    updatedAt: rec.updatedAt || 0,
+    rev: rec.rev
+  };
+}
+
 // Обновить общий список топ-игроков
 async function updateTop(lb, id, name, total) {
   const top = (await lb.get('top', { type: 'json' })) || { entries: {} };
@@ -97,6 +185,50 @@ export default async (req) => {
   // strong: читаем всегда свежую запись, а не устаревшую копию
   const store = getStore({ name: 'players', consistency: 'strong' });
   const lb = getStore({ name: 'leaderboard', consistency: 'strong' });
+  // ---------- админские запросы (только для ADMIN_IDS) ----------
+  if (typeof body.action === 'string' && body.action.startsWith('admin_')) {
+    if (!ADMIN_IDS.includes(String(user.id))) return json({ error: 'forbidden' }, 403);
+
+    if (body.action === 'admin_list') {
+      const { blobs } = await store.list({ prefix: 'u_' });
+      const rows = [];
+      for (let i = 0; i < blobs.length; i += 20) {
+        const chunk = blobs.slice(i, i + 20);
+        const recs = await Promise.all(chunk.map(b => store.get(b.key, { type: 'json' }).catch(() => null)));
+        recs.forEach(r => { if (r && r.state) rows.push(summary(r)); });
+      }
+      rows.sort((a, b) => b.total - a.total);
+      return json({ players: rows });
+    }
+
+    const tid = String(body.targetId || '').replace(/\D/g, '');
+    if (!tid) return json({ error: 'bad_target' }, 400);
+    const tkey = `u_${tid}`;
+    const rec = await store.get(tkey, { type: 'json' });
+    if (!rec || !rec.state) return json({ error: 'no_player' }, 404);
+
+    if (body.action === 'admin_get') {
+      return json({ summary: summary(rec), state: rec.state });
+    }
+
+    if (body.action === 'admin_update') {
+      const err = applyAdminAction(rec.state, body.act, body.value);
+      if (err) return json({ error: err }, 400);
+      rec.rev = (rec.rev || 0) + 1;
+      rec.deviceId = 'admin';
+      rec.updatedAt = Date.now();
+      await store.setJSON(tkey, rec);
+      try {
+        await updateTop(lb, tid, rec.name || rec.firstName || 'Игрок', Math.floor(Number(rec.state.total) || 0));
+      } catch (e) {
+        console.error('leaderboard update failed', e);
+      }
+      return json({ ok: true, summary: summary(rec), state: rec.state });
+    }
+
+    return json({ error: 'unknown_action' }, 400);
+  }
+
   const key = `u_${user.id}`;
   const current = await store.get(key, { type: 'json' });
 
