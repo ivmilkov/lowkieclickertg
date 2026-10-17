@@ -574,7 +574,7 @@ export default async (req) => {
       t.messages.push({ from: 'user', text, ts: now });
       t.status = 'open'; t.unreadAdmin = true; t.updatedAt = now;
       await tkStore.setJSON(k, t);
-      await notifyAdmins(origin, `💬 Новое сообщение в обращении «${t.subject}»\n${t.name}${t.username ? ' (@' + t.username + ')' : ''}\n\n${text.slice(0, 600)}`);
+      await notifyAdmins(origin, `новое сообщение в обращении «${t.subject}»\n${t.name}${t.username ? ' (@' + t.username + ')' : ''}\n\n${text.slice(0, 600)}`);
       return json({ ok: true, ticket: ticketForUser(t) });
     }
     return json({ error: 'unknown_action' }, 400);
