@@ -250,6 +250,7 @@
     }
     try { updateUI(); } catch (e) {}
     push();
+    setTimeout(() => { try { ticketsAfterReady(); } catch (e) { console.warn('[cloud] tickets', e); } }, 400);
   }
 
   // ---------- лидеры ----------
@@ -386,6 +387,302 @@
       }
     } catch (e) {}
   }, 45000);
+
+  // =====================================================================
+  // ТИКЕТЫ ПОДДЕРЖКИ: хранятся на сервере (привязаны к Telegram-аккаунту),
+  // ответы поддержки приходят прямо в обращение
+  // =====================================================================
+  const TK_MAX_RAW = 3300 * 1024;   // максимум на одно вложение после сжатия (≈4,4 МБ в base64)
+  const tk = { list: null, error: false, at: 0, sig: '' };
+  const tkDrafts = {};              // черновики ответов, чтобы обновление списка их не стирало
+  let tkBusy = false;
+
+  (function injectTicketStyles() {
+    const st = document.createElement('style');
+    st.textContent = `
+      .status-answered{background:rgba(14,203,129,0.15);color:#0ecb81;border:1px solid rgba(14,203,129,0.3)}
+      .status-closed{background:rgba(154,166,178,0.15);color:#9aa6b2;border:1px solid rgba(154,166,178,0.3)}
+      .tk-new{display:inline-block;margin-left:6px;padding:2px 7px;border-radius:999px;background:#f6465d;color:#fff;font-size:10px;font-weight:800;vertical-align:middle}
+      .tk-thread{display:flex;flex-direction:column;gap:8px;margin:8px 0}
+      .tk-msg{max-width:92%;padding:8px 11px;border-radius:12px;font-size:13px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+      .tk-msg.user{align-self:flex-end;background:rgba(77,166,255,0.16);border:1px solid rgba(77,166,255,0.25)}
+      .tk-msg.admin{align-self:flex-start;background:rgba(14,203,129,0.13);border:1px solid rgba(14,203,129,0.28)}
+      .tk-msg .who{display:block;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;opacity:.7;margin-bottom:3px}
+      .tk-msg .when{display:block;font-size:10px;opacity:.5;margin-top:4px;text-align:right}
+      .tk-files{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+      .tk-file{padding:6px 10px;border-radius:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);color:#fff;font-size:12px;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .tk-reply{display:flex;gap:8px;align-items:flex-end;margin-top:8px}
+      .tk-reply textarea{flex:1;min-height:42px;max-height:120px;resize:vertical;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:9px;color:#fff;font-family:inherit;font-size:13px;outline:none}
+      .tk-reply button{padding:10px 14px;border:none;border-radius:8px;background:linear-gradient(90deg,#4da6ff,#0066cc);color:#fff;font-weight:800;cursor:pointer}
+      .tk-reply button:disabled{opacity:.5}
+      #tkBadge{display:inline-block;margin-left:8px;min-width:18px;padding:1px 6px;border-radius:999px;background:#f6465d;color:#fff;font-size:11px;font-weight:800;text-align:center;vertical-align:middle}
+    `;
+    document.head.appendChild(st);
+  })();
+
+  const tkDate = ts => { try { return new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
+  const tkSize = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' МБ' : Math.max(1, Math.round(n / 1024)) + ' КБ';
+  const supportOpen = () => { const m = document.getElementById('supportModal'); return !!(m && m.classList.contains('open')); };
+
+  function updateSupportBadge() {
+    const title = document.querySelector('#openSupportBtn .sw-title');
+    if (!title) return;
+    const n = (tk.list || []).filter(t => t.unread).length;
+    let b = document.getElementById('tkBadge');
+    if (!n) { if (b) b.remove(); return; }
+    if (!b) { b = document.createElement('span'); b.id = 'tkBadge'; title.appendChild(b); }
+    b.textContent = String(n);
+  }
+
+  function showTicketFile(blob) { // вложение: картинка — во весь экран, остальное — скачивание
+    if (blob.type && blob.type.startsWith('image/') && blob.type !== 'image/svg+xml') {
+      const ov = document.createElement('div');
+      ov.style.cssText = 'position:fixed;inset:0;z-index:20000;background:rgba(0,0,0,0.92);display:flex;align-items:center;justify-content:center;padding:12px;cursor:zoom-out';
+      const img = document.createElement('img');
+      img.src = blob.data;
+      img.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain;transform:none;';
+      ov.appendChild(img);
+      ov.onclick = () => ov.remove();
+      document.body.appendChild(ov);
+    } else {
+      const a = document.createElement('a');
+      a.href = blob.data; a.download = blob.name || 'file';
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+  }
+  async function openTicketFile(id, idx) {
+    try {
+      const r = await api({ action: 'ticket_file_get', id, idx });
+      if (!r.ok) throw new Error(r.status);
+      showTicketFile(r.data);
+    } catch (e) { showAlert('Не удалось открыть файл. Попробуйте позже.'); }
+  }
+
+  const TK_STATUS = {
+    open: ['НА РАССМОТРЕНИИ', 'status-pending'],
+    answered: ['ОТВЕЧЕНО', 'status-answered'],
+    closed: ['ЗАКРЫТО', 'status-closed']
+  };
+
+  function renderTicketsCloud() {
+    const box = document.getElementById('ticketsList');
+    if (!box) return;
+    if (supportOpen() && Date.now() - tk.at > 8000) loadTickets();
+    box.innerHTML = '';
+    const note = t => { const d = document.createElement('div'); d.style.cssText = 'color:var(--muted);text-align:center;padding:20px;font-size:13px;'; d.textContent = t; box.appendChild(d); };
+    if (!tk.list) { note(tk.error ? 'Не удалось загрузить обращения' : 'Загрузка…'); return; }
+    if (!tk.list.length) { note('У вас пока нет обращений'); return; }
+
+    tk.list.forEach(t => {
+      const el = document.createElement('div');
+      el.className = 'ticket-item';
+
+      const head = document.createElement('div'); head.className = 'ticket-header';
+      const subj = document.createElement('span'); subj.className = 'ticket-subject'; subj.textContent = t.subject;
+      if (t.unread) { const n = document.createElement('span'); n.className = 'tk-new'; n.textContent = 'ОТВЕТ'; subj.appendChild(n); }
+      const st = TK_STATUS[t.status] || TK_STATUS.open;
+      const chip = document.createElement('span'); chip.className = 'ticket-status ' + st[1]; chip.textContent = st[0];
+      head.appendChild(subj); head.appendChild(chip);
+      el.appendChild(head);
+
+      const thread = document.createElement('div'); thread.className = 'tk-thread';
+      t.messages.forEach(m => {
+        const b = document.createElement('div'); b.className = 'tk-msg ' + (m.from === 'admin' ? 'admin' : 'user');
+        const who = document.createElement('span'); who.className = 'who'; who.textContent = m.from === 'admin' ? 'Поддержка' : 'Вы';
+        const txt = document.createElement('span'); txt.textContent = m.text;
+        const when = document.createElement('span'); when.className = 'when'; when.textContent = tkDate(m.ts);
+        b.appendChild(who); b.appendChild(txt); b.appendChild(when);
+        thread.appendChild(b);
+      });
+      el.appendChild(thread);
+
+      if (t.files && t.files.length) {
+        const fl = document.createElement('div'); fl.className = 'tk-files';
+        t.files.forEach((f, i) => {
+          const c = document.createElement('div'); c.className = 'tk-file';
+          c.textContent = ((f.type || '').startsWith('image/') ? '🖼 ' : '📄 ') + f.name + ' · ' + tkSize(f.size);
+          c.onclick = () => openTicketFile(t.id, i);
+          fl.appendChild(c);
+        });
+        el.appendChild(fl);
+      }
+
+      if (t.status !== 'closed') {
+        const rep = document.createElement('div'); rep.className = 'tk-reply';
+        const ta = document.createElement('textarea'); ta.placeholder = 'Написать в обращение…'; ta.maxLength = 3000;
+        ta.value = tkDrafts[t.id] || '';
+        ta.oninput = () => { tkDrafts[t.id] = ta.value; };
+        const bt = document.createElement('button'); bt.type = 'button'; bt.textContent = 'Отправить';
+        bt.onclick = () => sendTicketReply(t.id, ta, bt);
+        rep.appendChild(ta); rep.appendChild(bt);
+        el.appendChild(rep);
+      }
+      const date = document.createElement('div'); date.className = 'ticket-date'; date.textContent = new Date(t.createdAt).toLocaleString('ru-RU');
+      el.appendChild(date);
+      box.appendChild(el);
+    });
+  }
+
+  async function sendTicketReply(id, ta, btn) {
+    const text = ta.value.trim();
+    if (!text) return;
+    btn.disabled = true;
+    try {
+      const r = await api({ action: 'ticket_reply', id, text });
+      if (!r.ok) {
+        const e = r.data && r.data.error;
+        throw new Error(e === 'closed' ? 'Обращение закрыто. Создайте новое.' : e === 'too_many' ? 'В обращении слишком много сообщений. Создайте новое.' : 'Не удалось отправить. Попробуйте позже.');
+      }
+      delete tkDrafts[id];
+      const i = tk.list.findIndex(t => t.id === id);
+      if (i >= 0) tk.list[i] = r.data.ticket;
+      tk.sig = ''; renderTicketsCloud();
+    } catch (e) {
+      showAlert(e.message || 'Не удалось отправить. Попробуйте позже.');
+      btn.disabled = false;
+    }
+  }
+
+  async function loadTickets() {
+    if (!ready) return;
+    try {
+      const r = await api({ action: 'tickets' });
+      if (!r.ok) throw new Error('tickets ' + r.status);
+      const sig = JSON.stringify(r.data.tickets);
+      const changed = sig !== tk.sig;
+      tk.list = r.data.tickets; tk.sig = sig; tk.error = false;
+      tk.at = Date.now();
+      if (changed) renderTicketsCloud();
+    } catch (e) {
+      tk.error = true; tk.at = Date.now();
+      if (!tk.list) renderTicketsCloud();
+    }
+    updateSupportBadge();
+    markTicketsRead();
+  }
+
+  // когда игрок смотрит обращения, ответы считаются прочитанными
+  async function markTicketsRead() {
+    if (!supportOpen() || !tk.list) return;
+    const unread = tk.list.filter(t => t.unread);
+    for (const t of unread) {
+      try {
+        const r = await api({ action: 'ticket_read', id: t.id });
+        if (r.ok) t.unread = false;
+      } catch (e) {}
+    }
+    if (unread.length) { tk.sig = JSON.stringify(tk.list); updateSupportBadge(); setTimeout(renderTicketsCloud, 2500); }
+  }
+
+  // подменяем рендер из script.js (он вызывается по имени при загрузке и при открытии окна поддержки)
+  renderSupportTickets = renderTicketsCloud;
+  renderTicketsCloud(); // сразу убираем локальный список, пока не загрузились обращения с сервера
+
+  // --- отправка нового обращения ---
+  function fileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const rd = new FileReader();
+      rd.onload = () => resolve(rd.result); rd.onerror = reject; rd.readAsDataURL(file);
+    });
+  }
+  async function prepareAttachment(file) {   // картинки сжимаем, чтобы они уходили быстро
+    const isImg = (file.type || '').startsWith('image/') && !/gif|svg/.test(file.type);
+    if (isImg) {
+      try {
+        const url = URL.createObjectURL(file);
+        const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+        const k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+        if (k < 1 || file.size > 700 * 1024) {
+          const c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k));
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          const blob = await new Promise(res => c.toBlob(res, 'image/jpeg', 0.82));
+          URL.revokeObjectURL(url);
+          if (blob && blob.size < file.size) return { name: file.name.replace(/\.\w+$/, '') + '.jpg', size: blob.size, data: await fileToDataUrl(blob) };
+        }
+        URL.revokeObjectURL(url);
+      } catch (e) { /* не получилось сжать — отправим как есть */ }
+    }
+    return { name: file.name, size: file.size, data: await fileToDataUrl(file) };
+  }
+
+  document.addEventListener('submit', async (e) => {
+    if (!e.target || e.target.id !== 'supportForm') return;
+    e.preventDefault(); e.stopImmediatePropagation();     // вместо локального сохранения из script.js
+    if (tkBusy) return;
+    const subject = document.getElementById('supportSubject').value.trim();
+    const message = document.getElementById('supportMessage').value.trim();
+    if (!subject || !message) { showAlert('Пожалуйста, заполните тему и сообщение'); return; }
+    if (!ready) { showAlert('Нет связи с сервером. Попробуйте чуть позже.'); return; }
+
+    const form = e.target;
+    const btn = form.querySelector('button[type="submit"]');
+    const oldText = btn.textContent;
+    tkBusy = true; btn.textContent = 'Отправка...'; btn.disabled = true;
+    try {
+      const files = [];
+      for (const f of (selectedSupportFiles || [])) {
+        const a = await prepareAttachment(f);
+        if (a.size > TK_MAX_RAW) { showAlert(`Файл ${f.name} слишком большой для отправки (макс 3 МБ после сжатия)`); return; }
+        files.push(a);
+      }
+      const r = await api({ action: 'ticket_create', subject, message });
+      if (!r.ok) {
+        const er = r.data && r.data.error;
+        showAlert(er === 'too_fast' ? 'Подождите немного перед отправкой следующего обращения.'
+          : er === 'too_many_open' ? 'У вас слишком много открытых обращений. Дождитесь ответа.'
+          : 'Не удалось отправить обращение. Попробуйте позже.');
+        return;
+      }
+      let failed = 0;
+      for (const f of files) {
+        try {
+          const u = await api({ action: 'ticket_file', id: r.data.id, name: f.name, data: f.data });
+          if (!u.ok) failed++;
+        } catch (err) { failed++; }
+      }
+      form.reset();
+      selectedSupportFiles = []; try { renderFilePreviews(); } catch (err) {}
+      tk.sig = ''; tk.at = 0; await loadTickets();
+      showAlert(failed ? `Обращение отправлено, но файлов не загрузилось: ${failed}.` : 'Ваше обращение успешно отправлено! Мы ответим вам в ближайшее время.');
+    } catch (err) {
+      console.error(err);
+      showAlert('Ошибка при отправке. Попробуйте снова.');
+    } finally {
+      tkBusy = false; btn.textContent = oldText; btn.disabled = false;
+    }
+  }, true);
+
+  // --- старые обращения с устройства один раз переносим на сервер ---
+  async function migrateLocalTickets() {
+    const sup = state.support;
+    if (!sup || sup.imported || !Array.isArray(sup.tickets) || !sup.tickets.length) return;
+    const items = sup.tickets.filter(t => t && t.subject && t.message)
+      .map(t => ({ lid: String(t.id), subject: String(t.subject), message: String(t.message), date: t.date }));
+    if (!items.length) { sup.imported = true; origSave(); return; }
+    const r = await api({ action: 'ticket_import', items });
+    if (!r.ok) return; // попробуем при следующем запуске
+    // вложения старых обращений: пробуем загрузить те, что влезают
+    for (const it of (r.data.items || [])) {
+      if (!it.created) continue;
+      const local = sup.tickets.find(t => String(t.id) === it.lid);
+      const files = (local && local.files) || [];
+      for (const f of files) {
+        if (!f || typeof f.data !== 'string' || f.data.length > 4400000) continue;
+        try { await api({ action: 'ticket_file', id: it.id, name: f.name || 'file', data: f.data }); } catch (e) {}
+      }
+    }
+    // на устройстве оставляем текст обращений, тяжёлые вложения убираем (они уже на сервере)
+    sup.tickets.forEach(t => { if (t.files) t.files = t.files.map(f => ({ name: f.name, type: f.type, size: f.size })); delete t.fileData; });
+    sup.imported = true;
+    origSave();
+  }
+
+  async function ticketsAfterReady() {
+    try { await migrateLocalTickets(); } catch (e) { console.warn('[cloud] migrate tickets', e); }
+    await loadTickets();
+    setInterval(() => { if (ready && document.visibilityState === 'visible') loadTickets(); }, 60000);
+  }
 
   init().then(hideOverlay).catch(e => {
     console.warn('[cloud] нет связи, играем локально', e);
