@@ -99,6 +99,9 @@
     let currency, amount;
     if (title === 'Лотерея' && lastLotteryTicket) {
       currency = 'diamonds'; amount = Number(lastLotteryTicket.cost); lastLotteryTicket = null;
+    } else if (type === 'income' && /^Продажа\s+[\d.,]+\s+алмаз/i.test(title)) {
+      // алмазы, проданные игроком на бирже за монеты, тоже уходят в казну
+      currency = 'diamonds'; amount = parseFloat(String(title).match(/[\d.,]+/)[0].replace(',', '.'));
     } else if (type === 'spend') {
       const p = parseSpend(amountDisplay);
       if (!p) return;
