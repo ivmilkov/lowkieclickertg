@@ -9,18 +9,50 @@
     body { font-family:Inter, ui-sans-serif, system-ui, -apple-system,"Segoe UI",Roboto,Arial; background:#0f1724; color:#fff; text-align:center; padding:16px; margin:0; }
     input, button { padding:10px; margin:6px; border-radius:8px; border:none; font-size:14px; }
     button { cursor:pointer; background:#ffd166; font-weight:bold; }
+    input[type="number"], input[type="text"] { width:min(300px, 88%); box-sizing:border-box; }
     button:disabled { opacity:.5; cursor:not-allowed; }
-    #panel { display:none; margin-top:12px; max-width:760px; margin-left:auto; margin-right:auto; }
+    button.ghost { background:rgba(255,255,255,0.08); color:#fff; }
+    #panel { display:none; margin-top:4px; max-width:760px; margin-left:auto; margin-right:auto; }
     .row { margin:8px 0; }
     .small { color:#9aa6b2; font-size:13px; }
     .danger { background:#ff6b6b; color:#071226; }
     .muted { color:#9aa6b2; font-size:13px; display:block; margin-top:6px; }
     #mode { color:#9aa6b2; font-size:12px; margin-bottom:12px; }
+    h2 { margin:8px 0 4px; }
     h3 { margin:10px 0 4px; }
 
+    /* главный экран: меню как в настройках телефона */
+    #menu { max-width:520px; margin:18px auto 0; display:flex; flex-direction:column; gap:12px; }
+    .mrow { display:flex; align-items:center; gap:14px; width:100%; margin:0; padding:14px 14px; text-align:left;
+            background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:16px; color:#fff;
+            font-weight:normal; transition:background .2s, transform .1s; }
+    .mrow:active { transform:scale(0.98); background:rgba(255,255,255,0.08); }
+    .mrow .ico { width:48px; height:48px; border-radius:13px; display:flex; align-items:center; justify-content:center; font-size:26px; flex-shrink:0; }
+    .mrow[data-tab="home"] .ico { background:linear-gradient(135deg,#4da6ff,#0066cc); }
+    .mrow[data-tab="boost"] .ico { background:linear-gradient(135deg,#ffd166,#ff9f43); }
+    .mrow .txt { flex:1; min-width:0; }
+    .mrow .ttl { display:block; font-weight:800; font-size:16px; }
+    .mrow .dsc { display:block; font-size:12px; color:#9aa6b2; line-height:1.3; margin-top:3px; }
+    .mrow .arr { color:#9aa6b2; font-size:22px; flex-shrink:0; }
+
+    /* шапка открытой страницы со стрелкой «назад» */
+    #pageBar { display:none; position:sticky; top:0; z-index:10; margin:-16px -16px 12px; padding:12px 14px;
+               background:#0f1724; border-bottom:1px solid rgba(255,255,255,0.06); align-items:center; gap:10px; text-align:left; }
+    #pageBar.show { display:flex; }
+    #backBtn { background:transparent; color:#fff; margin:0; padding:6px 8px; border-radius:10px; display:flex; align-items:center; }
+    #backBtn:active { background:rgba(255,255,255,0.08); }
+    #pageTitle { font-weight:800; font-size:18px; }
+    @keyframes pageIn { from { opacity:0; transform:translateX(24px); } to { opacity:1; transform:translateX(0); } }
+    .page { display:none; }
+    .page.active { display:block; animation:pageIn .22s ease; }
+
     .box { background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:12px; padding:12px; margin:10px 0; }
-    #search { width:calc(100% - 12px); box-sizing:border-box; background:rgba(0,0,0,.3); color:#fff; border:1px solid rgba(255,255,255,.1); }
-    #playersList { max-height:300px; overflow-y:auto; text-align:left; }
+    .stats { display:flex; gap:8px; margin:10px 0; }
+    .stat { flex:1; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:12px; padding:10px 6px; }
+    .stat b { display:block; font-size:16px; color:#ffd166; }
+    .stat span { font-size:11px; color:#9aa6b2; }
+    .search { width:calc(100% - 12px); box-sizing:border-box; background:rgba(0,0,0,.3); color:#fff; border:1px solid rgba(255,255,255,.1); }
+    .plist { max-height:320px; overflow-y:auto; text-align:left; }
     .pl { display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:10px; cursor:pointer; border:1px solid transparent; }
     .pl:hover { background:rgba(255,255,255,0.05); }
     .pl.sel { border-color:#ffd166; background:rgba(255,209,102,0.08); }
@@ -31,8 +63,14 @@
     .pl .bl { text-align:right; font-size:13px; color:#ffd166; font-weight:700; flex-shrink:0; }
     .pl .bl i { display:block; font-style:normal; color:#6fd3ff; font-weight:600; }
 
-    #info { text-align:left; font-size:14px; line-height:1.7; }
-    #info b { color:#ffd166; }
+    .info { text-align:left; font-size:14px; line-height:1.7; }
+    .info b { color:#ffd166; }
+
+    .pick { display:flex; align-items:center; gap:10px; text-align:left; }
+    .pick .who { flex:1; min-width:0; }
+    .pick .who b { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .pick .who span { font-size:12px; color:#9aa6b2; }
+    #pickerList { display:none; }
 
     /* Стиль только для тумблера автофарма */
     .switch { position: relative; display: inline-block; width: 50px; height: 26px; vertical-align: middle; margin: 0 10px; }
@@ -44,82 +82,135 @@
 </style>
 </head>
 <body>
-  <h2>админ панель</h2>
-  <div id="mode">загрузка…</div>
+  <div id="pageBar">
+    <button id="backBtn" onclick="showTab('menu')" aria-label="назад">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    </button>
+    <div id="pageTitle"></div>
+  </div>
+
+  <div id="head">
+    <h2>админ панель</h2>
+    <div id="mode">загрузка…</div>
+  </div>
   <div id="denied" style="display:none; color:#ff6b6b; margin-top:20px;"></div>
 
   <div id="panel">
 
-    <div class="box">
-      <h3>игроки (<span id="plCount">0</span>)</h3>
-      <input type="text" id="search" placeholder="поиск по имени, @username, нику или id" oninput="renderPlayers()">
-      <div><button onclick="loadPlayers()">обновить список</button></div>
-      <div id="playersList"></div>
+    <div id="menu">
+      <button class="mrow" data-tab="home" onclick="showTab('home')">
+        <div class="ico">🏠</div>
+        <div class="txt"><span class="ttl">Главная</span><span class="dsc">все игроки, их баланс монет и алмазов</span></div>
+        <div class="arr">›</div>
+      </button>
+      <button class="mrow" data-tab="boost" onclick="showTab('boost')">
+        <div class="ico">💰</div>
+        <div class="txt"><span class="ttl">Накрутка</span><span class="dsc">монеты, алмазы и бусты себе и игрокам</span></div>
+        <div class="arr">›</div>
+      </button>
     </div>
 
-    <div id="editor" style="display:none">
+    <!-- ============ ГЛАВНАЯ: только просмотр ============ -->
+    <div id="page-home" class="page">
+      <div class="stats">
+        <div class="stat"><b id="stPlayers">0</b><span>игроков</span></div>
+        <div class="stat"><b id="stCoins">0</b><span>монет всего</span></div>
+        <div class="stat"><b id="stDiamonds">0</b><span>алмазов всего</span></div>
+      </div>
+
       <div class="box">
-        <h3 id="selTitle">—</h3>
-        <div id="info"></div>
+        <input type="text" class="search" id="searchHome" placeholder="поиск по имени, @username, нику или id" oninput="renderList('home')">
+        <div><button class="ghost" onclick="loadPlayers()">🔄 обновить список</button></div>
+        <div id="listHome" class="plist"></div>
       </div>
 
-      <div class="row">
-        <h3>монеты</h3>
-        <input type="number" id="coins" placeholder="число монет"><br>
-        <button onclick="op('setCoins', val('coins'))">установить баланс</button>
-        <button onclick="op('addCoins', val('coins'))">добавить к балансу</button>
+      <div id="homeCard" class="box" style="display:none">
+        <h3 id="homeTitle">—</h3>
+        <div id="homeInfo" class="info"></div>
+        <button onclick="goBoost()">💰 накрутить этому игроку</button>
       </div>
+    </div>
 
-      <div class="row">
-        <h3>сжечь монеты (сжигаловка)</h3>
-        <input type="number" id="burnAmount" placeholder="сколько сжечь (целое число)"><br>
-        <button onclick="burn()">сжечь</button>
-      </div>
+    <!-- ============ НАКРУТКА: все правки ============ -->
+    <div id="page-boost" class="page">
 
-      <div class="row">
-        <h3>алмазы</h3>
-        <input type="number" id="diamonds" placeholder="число алмазов"><br>
-        <button onclick="op('setDiamonds', val('diamonds'))">установить баланс</button>
-        <button onclick="op('addDiamonds', val('diamonds'))">добавить к балансу</button>
-      </div>
-
-      <div class="row">
-        <h3>бонус за клик</h3>
-        <input type="number" id="clickBonus" placeholder="бонус за клик"><br>
-        <button onclick="op('setClickBonus', val('clickBonus'))">установить</button>
-        <button onclick="op('addClickBonus', val('clickBonus'))">добавить</button>
-      </div>
-
-      <div class="row">
-        <h3>бусты</h3>
-        <button onclick="op('maxBoost')">открыть все бусты</button>
-      </div>
-
-      <div class="row">
-        <h3>никнейм игрока в игре</h3>
-        <input type="text" id="newNick" placeholder="новый ник"><br>
-        <button onclick="setNick()">изменить ник</button>
-        <button onclick="op('resetNickname')">вернуть стандартный</button>
-        <span class="muted">в таблице лидеров всегда имя из Telegram</span>
-      </div>
-
-      <div class="row">
-        <h3>автофарм (клики по зажатию)</h3>
-        <span class="muted">при зажатии/ведении по картинке монеты будут автоматически фармиться</span>
-        <div style="margin: 10px 0;">
-          <span class="small">выкл</span>
-          <label class="switch">
-            <input type="checkbox" id="holdToTapToggle" onchange="op('holdToTap', this.checked, true)">
-            <span class="slider"></span>
-          </label>
-          <span class="small" style="color: #ffd166;">вкл</span>
+      <div class="box">
+        <div class="pick">
+          <div class="who">
+            <b id="pickName">игрок не выбран</b>
+            <span id="pickSub">выбери, кому накручивать</span>
+          </div>
+          <button class="ghost" onclick="togglePicker()">сменить игрока</button>
+        </div>
+        <div id="pickerList">
+          <input type="text" class="search" id="searchBoost" placeholder="поиск по имени, @username, нику или id" oninput="renderList('boost')">
+          <div id="listBoost" class="plist"></div>
         </div>
       </div>
 
-      <div class="row">
-        <h3>сброс</h3>
-        <div class="small">сбросит весь прогресс выбранного игрока (монеты, алмазы, апгрейды, энергия и т.д.) к стандартным значениям.</div>
-        <button class="danger" onclick="resetPlayer()">сбросить прогресс</button>
+      <div id="editor" style="display:none">
+        <div class="box">
+          <div id="boostInfo" class="info"></div>
+        </div>
+
+        <div class="row">
+          <h3>монеты</h3>
+          <input type="number" id="coins" placeholder="число монет"><br>
+          <button onclick="op('setCoins', val('coins'))">установить баланс</button>
+          <button onclick="op('addCoins', val('coins'))">добавить к балансу</button>
+        </div>
+
+        <div class="row">
+          <h3>сжечь монеты (сжигаловка)</h3>
+          <input type="number" id="burnAmount" placeholder="сколько сжечь (целое число)"><br>
+          <button onclick="burn()">сжечь</button>
+        </div>
+
+        <div class="row">
+          <h3>алмазы</h3>
+          <input type="number" id="diamonds" placeholder="число алмазов"><br>
+          <button onclick="op('setDiamonds', val('diamonds'))">установить баланс</button>
+          <button onclick="op('addDiamonds', val('diamonds'))">добавить к балансу</button>
+        </div>
+
+        <div class="row">
+          <h3>бонус за клик</h3>
+          <input type="number" id="clickBonus" placeholder="бонус за клик"><br>
+          <button onclick="op('setClickBonus', val('clickBonus'))">установить</button>
+          <button onclick="op('addClickBonus', val('clickBonus'))">добавить</button>
+        </div>
+
+        <div class="row">
+          <h3>бусты</h3>
+          <button onclick="op('maxBoost')">открыть все бусты</button>
+        </div>
+
+        <div class="row">
+          <h3>никнейм игрока в игре</h3>
+          <input type="text" id="newNick" placeholder="новый ник"><br>
+          <button onclick="setNick()">изменить ник</button>
+          <button onclick="op('resetNickname')">вернуть стандартный</button>
+          <span class="muted">в таблице лидеров всегда имя из Telegram</span>
+        </div>
+
+        <div class="row">
+          <h3>автофарм (клики по зажатию)</h3>
+          <span class="muted">при зажатии/ведении по картинке монеты будут автоматически фармиться</span>
+          <div style="margin: 10px 0;">
+            <span class="small">выкл</span>
+            <label class="switch">
+              <input type="checkbox" id="holdToTapToggle" onchange="op('holdToTap', this.checked, true)">
+              <span class="slider"></span>
+            </label>
+            <span class="small" style="color: #ffd166;">вкл</span>
+          </div>
+        </div>
+
+        <div class="row">
+          <h3>сброс</h3>
+          <div class="small">сбросит весь прогресс выбранного игрока (монеты, алмазы, апгрейды, энергия и т.д.) к стандартным значениям.</div>
+          <button class="danger" onclick="resetPlayer()">сбросить прогресс</button>
+        </div>
       </div>
     </div>
   </div>
@@ -134,7 +225,7 @@
     let selectedId = null;
     const details = {}; // полное состояние игроков (admin_get)
 
-    if (initData) { try { tg.ready(); tg.expand(); } catch (e) {} }
+    if (initData) { try { tg.ready(); tg.expand(); tg.BackButton.onClick(() => showTab('menu')); } catch (e) {} }
 
     async function api(payload) {
       const res = await fetch(API, {
@@ -168,21 +259,63 @@
       return Math.floor(s / 86400) + ' дн назад';
     }
 
+    // ---------- навигация: меню -> страница со стрелкой «назад» ----------
+    const TITLES = { home: '🏠 Главная', boost: '💰 Накрутка' };
+    function showTab(name) {
+      const inMenu = name === 'menu';
+      document.getElementById('menu').style.display = inMenu ? 'flex' : 'none';
+      document.getElementById('head').style.display = inMenu ? 'block' : 'none';
+      document.getElementById('pageBar').classList.toggle('show', !inMenu);
+      document.getElementById('pageTitle').textContent = TITLES[name] || '';
+      document.getElementById('page-home').classList.toggle('active', name === 'home');
+      document.getElementById('page-boost').classList.toggle('active', name === 'boost');
+      try {
+        if (tg && tg.BackButton) { if (inMenu) tg.BackButton.hide(); else tg.BackButton.show(); }
+      } catch (e) {}
+      if (name === 'home' && players.length) loadPlayers(); // при открытии «Главной» обновляем данные
+      window.scrollTo(0, 0);
+    }
+    function goBoost() { showTab('boost'); }
+
+    function togglePicker() {
+      const el = document.getElementById('pickerList');
+      el.style.display = el.style.display === 'block' ? 'none' : 'block';
+      if (el.style.display === 'block') renderList('boost');
+    }
+
+    function selectPlayer(id) {
+      selectedId = String(id);
+      renderAll();
+      fetchDetails(selectedId);
+    }
+
     // ---------- список игроков ----------
     async function loadPlayers() {
       const r = await api({ action: 'admin_list' });
       if (!r.ok) { alert('не удалось загрузить игроков (' + r.status + ')'); return; }
       players = r.data.players || [];
       if (!selectedId && MY_ID && players.some(p => String(p.id) === MY_ID)) selectedId = MY_ID;
-      renderPlayers();
-      renderEditor();
+      renderAll();
       if (selectedId) fetchDetails(String(selectedId));
     }
 
-    function renderPlayers() {
-      const q = document.getElementById('search').value.trim().toLowerCase().replace(/^@/, '');
-      const box = document.getElementById('playersList');
-      document.getElementById('plCount').textContent = players.length;
+    function renderAll() {
+      renderStats();
+      renderList('home');
+      if (document.getElementById('pickerList').style.display === 'block') renderList('boost');
+      renderCards();
+    }
+
+    function renderStats() {
+      document.getElementById('stPlayers').textContent = fmt(players.length);
+      document.getElementById('stCoins').textContent = fmt(players.reduce((a, p) => a + (p.total || 0), 0));
+      document.getElementById('stDiamonds').textContent = fmt(players.reduce((a, p) => a + (p.diamonds || 0), 0));
+    }
+
+    function renderList(which) {
+      const isHome = which === 'home';
+      const q = document.getElementById(isHome ? 'searchHome' : 'searchBoost').value.trim().toLowerCase().replace(/^@/, '');
+      const box = document.getElementById(isHome ? 'listHome' : 'listBoost');
       box.innerHTML = '';
       const list = players.filter(p => !q ||
         [pname(p), p.username, p.nickname, String(p.id)].some(x => x && String(x).toLowerCase().includes(q)));
@@ -190,7 +323,11 @@
       list.forEach((p, i) => {
         const row = document.createElement('div');
         row.className = 'pl' + (String(p.id) === String(selectedId) ? ' sel' : '');
-        row.onclick = () => { selectedId = String(p.id); renderPlayers(); renderEditor(); fetchDetails(String(p.id)); };
+        row.onclick = () => {
+          selectPlayer(p.id);
+          if (!isHome) document.getElementById('pickerList').style.display = 'none';
+          if (isHome) { const c = document.getElementById('homeCard'); setTimeout(() => c.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50); }
+        };
 
         const rk = document.createElement('div'); rk.className = 'rk'; rk.textContent = String(i + 1);
         const nm = document.createElement('div'); nm.className = 'nm';
@@ -214,23 +351,18 @@
         details[id] = r.data.state;
         const i = players.findIndex(x => String(x.id) === id);
         if (i >= 0) players[i] = r.data.summary;
-        if (String(selectedId) === id) { renderPlayers(); renderEditor(); }
+        if (String(selectedId) === id) renderAll();
       }
     }
 
-    function renderEditor() {
-      const p = sel();
-      const ed = document.getElementById('editor');
-      if (!p) { ed.style.display = 'none'; return; }
-      ed.style.display = 'block';
-      document.getElementById('selTitle').textContent = pname(p) + (String(p.id) === MY_ID ? ' (вы)' : '');
-      const info = document.getElementById('info');
-      info.innerHTML = '';
+    // карточка выбранного игрока: на «Главной» и в «Накрутке»
+    function fillInfo(box, p) {
+      box.innerHTML = '';
       const add = (label, value) => {
         const d = document.createElement('div');
         const b = document.createElement('b'); b.textContent = label + ': ';
         d.appendChild(b); d.appendChild(document.createTextNode(value));
-        info.appendChild(d);
+        box.appendChild(d);
       };
       const st = details[String(p.id)] || null;
       add('Telegram id', String(p.id));
@@ -243,11 +375,35 @@
         add('уровень пассива', String((st.passive && st.passive.level) || 0));
         add('энергия', fmt(Number(st.energyCurrent) || 0));
         add('скин', (st.skins && st.skins.equipped) || 'стандартный');
-        document.getElementById('holdToTapToggle').checked = !!st.holdToTap;
       } else {
         add('остальное', 'загрузка…');
       }
       add('последнее сохранение', ago(p.updatedAt));
+    }
+
+    function renderCards() {
+      const p = sel();
+      const homeCard = document.getElementById('homeCard');
+      const ed = document.getElementById('editor');
+      if (!p) {
+        homeCard.style.display = 'none';
+        ed.style.display = 'none';
+        document.getElementById('pickName').textContent = 'игрок не выбран';
+        document.getElementById('pickSub').textContent = 'выбери, кому накручивать';
+        return;
+      }
+      const title = pname(p) + (String(p.id) === MY_ID ? ' (вы)' : '');
+
+      homeCard.style.display = 'block';
+      document.getElementById('homeTitle').textContent = title;
+      fillInfo(document.getElementById('homeInfo'), p);
+
+      document.getElementById('pickName').textContent = title;
+      document.getElementById('pickSub').textContent = (p.username ? '@' + p.username : 'без username') + ' · ' + p.id;
+      ed.style.display = 'block';
+      fillInfo(document.getElementById('boostInfo'), p);
+      const st = details[String(p.id)];
+      if (st) document.getElementById('holdToTapToggle').checked = !!st.holdToTap;
     }
 
     // ---------- действия над выбранным игроком ----------
@@ -265,8 +421,7 @@
       const i = players.findIndex(x => String(x.id) === String(p.id));
       if (i >= 0) players[i] = r.data.summary;
       details[String(p.id)] = r.data.state;
-      renderPlayers();
-      renderEditor();
+      renderAll();
       if (!silent) alert('сохранено! игрок увидит изменения при следующем открытии игры (или в течение минуты)');
     }
 
