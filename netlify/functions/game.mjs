@@ -357,7 +357,11 @@ function pushHistory(st, title, amount) {
   st.history.unshift({ id: Date.now() + String(Math.random()).slice(2, 6), type: 'income', title, amount, date: Date.now() });
   if (st.history.length > 500) st.history.length = 500;
 }
-const REF_AMOUNT = `+${REF_COINS.toLocaleString('ru-RU')} монет и +${REF_INCOME} к прибыли в час`;
+// две отдельные записи: монеты и прибыль в час (в списке монеты идут выше)
+function pushRefHistory(st, title) {
+  pushHistory(st, title, `+${REF_INCOME} к прибыли в час`);
+  pushHistory(st, title, `+${REF_COINS.toLocaleString('ru-RU')} монет`);
+}
 function addCoins(st, n) { st.total = Math.min(MAX_VALUE, Math.max(0, (Number(st.total) || 0) + n)); }
 
 const notifyAdmins = (origin, text) =>
@@ -760,7 +764,7 @@ export default async (req) => {
     let refBonus = false;
     if (refMarker) {
       addCoins(st, REF_COINS);
-      pushHistory(st, 'Реферальная система: ты пришёл по приглашению', REF_AMOUNT);
+      pushRefHistory(st, 'Приглашение друга');
       const r = emptyRefs();
       r.units = 1; r.by = { id: refMarker.by.id, n: refMarker.by.n, ts: Date.now() };
       st.refs = r;
@@ -805,7 +809,7 @@ export default async (req) => {
             refs.list = refs.list.slice(0, REF_LIST_MAX);
             inv.state.refs = refs;
             addCoins(inv.state, REF_COINS);
-            pushHistory(inv.state, 'Новый реферал, REF_AMOUNT);
+            pushRefHistory(inv.state, 'Новый реферал');
             inv.rev = (inv.rev || 0) + 1;
             inv.deviceId = 'referral';
             inv.updatedAt = now;
