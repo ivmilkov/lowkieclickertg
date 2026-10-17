@@ -247,6 +247,64 @@ async function updateTop(lb, id, name, total, photo) {
   await lb.setJSON('top', top);
 }
 
+// ---------- тикеты поддержки ----------
+const T_MAX_SUBJECT = 100, T_MAX_TEXT = 3000, T_MAX_FILES = 10, T_MAX_OPEN = 10, T_MAX_MSGS = 100;
+const T_FILE_MAX_CHARS = 4_500_000;   // размер одного вложения (base64), чтобы запрос влез в лимит функции
+const T_CREATE_COOLDOWN = 15_000;     // пауза между созданием обращений
+const tText = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim().slice(0, n);
+const newTid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const tKey = (uid, tid) => `t_${uid}_${tid}`;
+const fKey = (uid, tid, i) => `f_${uid}_${tid}_${i}`;
+const validTid = s => typeof s === 'string' && /^[A-Za-z0-9]{3,24}$/.test(s);
+const validUid = s => typeof s === 'string' && /^\d{1,20}$/.test(s);
+
+async function loadTickets(store, prefix) {
+  const { blobs } = await store.list({ prefix });
+  const out = [];
+  for (let i = 0; i < blobs.length; i += 20) {
+    const recs = await Promise.all(blobs.slice(i, i + 20).map(b => store.get(b.key, { type: 'json' }).catch(() => null)));
+    recs.forEach(r => { if (r && r.id && Array.isArray(r.messages)) out.push(r); });
+  }
+  return out;
+}
+function ticketForUser(t) {
+  return {
+    id: t.id, subject: t.subject, status: t.status, createdAt: t.createdAt, updatedAt: t.updatedAt,
+    unread: !!t.unreadUser,
+    messages: t.messages.map(m => ({ from: m.from, text: m.text, ts: m.ts })),
+    files: (t.files || []).map(f => ({ name: f.name, type: f.type, size: f.size }))
+  };
+}
+function ticketForAdmin(t) {
+  return Object.assign(ticketForUser(t), { uid: String(t.uid), name: t.name, username: t.username || null, unreadAdmin: !!t.unreadAdmin });
+}
+function ticketPreview(t) {
+  const last = t.messages[t.messages.length - 1] || {};
+  return {
+    id: t.id, uid: String(t.uid), name: t.name, username: t.username || null, subject: t.subject, status: t.status,
+    createdAt: t.createdAt, updatedAt: t.updatedAt, unreadAdmin: !!t.unreadAdmin,
+    count: t.messages.length, lastFrom: last.from || 'user', preview: tText(last.text, 120), files: (t.files || []).length
+  };
+}
+
+// сообщение от бота в Telegram (если человек не запускал бота — Telegram откажет, это не страшно)
+async function tgSend(chatId, text, buttonText, buttonUrl) {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2500);
+    const payload = { chat_id: chatId, text: String(text).slice(0, 3500), disable_web_page_preview: true };
+    if (buttonText && /^https:\/\//.test(buttonUrl || '')) {
+      payload.reply_markup = { inline_keyboard: [[{ text: buttonText, web_app: { url: buttonUrl } }]] };
+    }
+    await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload), signal: ctrl.signal
+    });
+    clearTimeout(timer);
+  } catch (e) { /* уведомление необязательное */ }
+}
+const notifyAdmins = (origin, text) =>
+  Promise.all(ADMIN_IDS.map(id => tgSend(id, text, '🎫 Открыть тикеты', origin + '/admin.html?tab=tickets')));
+
 export default async (req) => {
   if (req.method !== 'POST') return json({ error: 'method' }, 405);
 
@@ -256,8 +314,9 @@ export default async (req) => {
   let body;
   try {
     const text = await req.text();
-    if (text.length > MAX_BODY) return json({ error: 'too_big' }, 413);
+    if (text.length > 6_000_000) return json({ error: 'too_big' }, 413);
     body = JSON.parse(text);
+    if (text.length > MAX_BODY && body.action !== 'ticket_file') return json({ error: 'too_big' }, 413);
   } catch (e) {
     return json({ error: 'bad_json' }, 400);
   }
@@ -274,6 +333,9 @@ export default async (req) => {
   const store = getStore({ name: 'players', consistency: 'strong' });
   const lb = getStore({ name: 'leaderboard', consistency: 'strong' });
   const tre = getStore({ name: 'treasury', consistency: 'strong' });
+  const tkStore = getStore({ name: 'tickets', consistency: 'strong' });
+  const tfStore = getStore({ name: 'ticketfiles', consistency: 'strong' });
+  const origin = new URL(req.url).origin;
   // ---------- админские запросы (только для ADMIN_IDS) ----------
   if (typeof body.action === 'string' && body.action.startsWith('admin_')) {
     if (!ADMIN_IDS.includes(String(user.id))) return json({ error: 'forbidden' }, 403);
@@ -338,6 +400,59 @@ export default async (req) => {
       return json({ ok: true, amount, currency, balance: left });
     }
 
+    // ----- тикеты поддержки (админ) -----
+    if (body.action === 'admin_tickets') {
+      const list = (await loadTickets(tkStore, 't_')).map(ticketPreview);
+      list.sort((a, b) => b.updatedAt - a.updatedAt);
+      const counts = { open: 0, answered: 0, closed: 0, unread: 0 };
+      list.forEach(t => { counts[t.status] = (counts[t.status] || 0) + 1; if (t.unreadAdmin) counts.unread++; });
+      return json({ tickets: list.slice(0, 500), counts });
+    }
+    if (body.action.startsWith('admin_ticket')) {
+      const tuid = String(body.uid || ''), ttid = String(body.id || '');
+      if (!validUid(tuid) || !validTid(ttid)) return json({ error: 'bad_target' }, 400);
+      const k = tKey(tuid, ttid);
+      const t = await tkStore.get(k, { type: 'json' });
+      if (!t || !Array.isArray(t.messages)) return json({ error: 'no_ticket' }, 404);
+
+      if (body.action === 'admin_ticket') {          // открыть обращение (и пометить прочитанным)
+        if (t.unreadAdmin) { t.unreadAdmin = false; await tkStore.setJSON(k, t); }
+        return json({ ticket: ticketForAdmin(t) });
+      }
+      if (body.action === 'admin_ticket_file') {
+        const idx = Math.floor(Number(body.idx));
+        if (!(idx >= 0) || idx >= (t.files || []).length) return json({ error: 'no_file' }, 404);
+        const f = await tfStore.get(fKey(tuid, ttid, idx), { type: 'json' });
+        if (!f) return json({ error: 'no_file' }, 404);
+        return json({ name: f.name, type: f.type, data: f.data });
+      }
+      if (body.action === 'admin_ticket_reply') {
+        const text = tText(body.text, T_MAX_TEXT);
+        if (!text) return json({ error: 'bad_value' }, 400);
+        if (t.messages.length >= T_MAX_MSGS) return json({ error: 'too_many' }, 400);
+        const now = Date.now();
+        t.messages.push({ from: 'admin', text, ts: now });
+        t.status = body.close ? 'closed' : 'answered';
+        t.unreadUser = true; t.unreadAdmin = false; t.updatedAt = now;
+        await tkStore.setJSON(k, t);
+        await tgSend(Number(tuid), `💬 Ответ поддержки на обращение «${t.subject}»:\n\n${text}`, '🎮 Открыть игру', origin + '/');
+        return json({ ok: true, ticket: ticketForAdmin(t) });
+      }
+      if (body.action === 'admin_ticket_status') {
+        if (body.status !== 'open' && body.status !== 'closed') return json({ error: 'bad_value' }, 400);
+        t.status = body.status === 'closed' ? 'closed' : (t.messages.some(m => m.from === 'admin') ? 'answered' : 'open');
+        t.updatedAt = Date.now();
+        await tkStore.setJSON(k, t);
+        return json({ ok: true, ticket: ticketForAdmin(t) });
+      }
+      if (body.action === 'admin_ticket_delete') {
+        for (let i = 0; i < (t.files || []).length; i++) { await tfStore.delete(fKey(tuid, ttid, i)).catch(() => {}); }
+        await tkStore.delete(k);
+        return json({ ok: true });
+      }
+      return json({ error: 'unknown_action' }, 400);
+    }
+
     const tid = String(body.targetId || '').replace(/\D/g, '');
     if (!tid) return json({ error: 'bad_target' }, 400);
     const tkey = `u_${tid}`;
@@ -363,6 +478,105 @@ export default async (req) => {
       return json({ ok: true, summary: summary(rec), state: rec.state });
     }
 
+    return json({ error: 'unknown_action' }, 400);
+  }
+
+  // ---------- тикеты поддержки (игрок видит только свои) ----------
+  if (typeof body.action === 'string' && (body.action === 'tickets' || body.action.startsWith('ticket_'))) {
+    const uid = String(user.id);
+    const prefix = `t_${uid}_`;
+    const now = Date.now();
+
+    if (body.action === 'tickets') {
+      const list = await loadTickets(tkStore, prefix);
+      list.sort((a, b) => b.updatedAt - a.updatedAt);
+      return json({ tickets: list.map(ticketForUser) });
+    }
+
+    if (body.action === 'ticket_create') {
+      const subject = tText(body.subject, T_MAX_SUBJECT).replace(/\s+/g, ' ');
+      const message = tText(body.message, T_MAX_TEXT);
+      if (!subject || !message) return json({ error: 'bad_value' }, 400);
+      const mine = await loadTickets(tkStore, prefix);
+      if (mine.filter(t => t.status !== 'closed').length >= T_MAX_OPEN) return json({ error: 'too_many_open' }, 429);
+      if (mine.some(t => now - t.createdAt < T_CREATE_COOLDOWN)) return json({ error: 'too_fast' }, 429);
+      const t = {
+        id: newTid(), uid, name: displayName(user), username: user.username || null, subject,
+        status: 'open', createdAt: now, updatedAt: now, unreadAdmin: true, unreadUser: false, files: [],
+        messages: [{ from: 'user', text: message, ts: now }]
+      };
+      await tkStore.setJSON(tKey(uid, t.id), t);
+      await notifyAdmins(origin, `🆘 Новое обращение в поддержку\n${t.name}${t.username ? ' (@' + t.username + ')' : ''}\n«${subject}»\n\n${message.slice(0, 600)}`);
+      return json({ ok: true, id: t.id });
+    }
+
+    // перенос старых обращений, которые лежали только на устройстве (повтор безопасен: дубли по lid не создаются)
+    if (body.action === 'ticket_import') {
+      const items = Array.isArray(body.items) ? body.items.slice(0, 30) : [];
+      const result = [];
+      for (const it of items) {
+        const lid = String((it && it.lid) || '').replace(/\D/g, '').slice(0, 16);
+        if (!lid) continue;
+        const tid = 'l' + lid;
+        const k = tKey(uid, tid);
+        if (await tkStore.get(k, { type: 'json' })) { result.push({ lid, id: tid, created: false }); continue; }
+        const subject = tText(it.subject, T_MAX_SUBJECT).replace(/\s+/g, ' ');
+        const message = tText(it.message, T_MAX_TEXT);
+        if (!subject || !message) continue;
+        let d = Number(it.date);
+        if (!Number.isFinite(d) || d <= 0 || d > now) d = now;
+        await tkStore.setJSON(k, {
+          id: tid, uid, name: displayName(user), username: user.username || null, subject,
+          status: 'open', createdAt: d, updatedAt: d, unreadAdmin: true, unreadUser: false, files: [], imported: true,
+          messages: [{ from: 'user', text: message, ts: d }]
+        });
+        result.push({ lid, id: tid, created: true });
+      }
+      return json({ ok: true, items: result });
+    }
+
+    const tid = String(body.id || '');
+    if (!validTid(tid)) return json({ error: 'bad_target' }, 400);
+    const k = tKey(uid, tid);
+    const t = await tkStore.get(k, { type: 'json' });
+    if (!t || !Array.isArray(t.messages)) return json({ error: 'no_ticket' }, 404);
+
+    if (body.action === 'ticket_file') {
+      if (t.status === 'closed') return json({ error: 'closed' }, 400);
+      if ((t.files || []).length >= T_MAX_FILES) return json({ error: 'too_many_files' }, 400);
+      const data = String(body.data || '');
+      if (!/^data:[\w\/+.\-]{1,100};base64,/.test(data)) return json({ error: 'bad_value' }, 400);
+      if (data.length > T_FILE_MAX_CHARS) return json({ error: 'file_too_big' }, 413);
+      const idx = (t.files || []).length;
+      const type = data.slice(5, data.indexOf(';'));
+      const f = { name: tText(body.name, 80) || 'file', type, size: Math.round((data.length - data.indexOf(',') - 1) * 3 / 4) };
+      await tfStore.setJSON(fKey(uid, tid, idx), Object.assign({ data }, f));
+      t.files = (t.files || []).concat([f]);
+      await tkStore.setJSON(k, t);
+      return json({ ok: true, idx });
+    }
+    if (body.action === 'ticket_file_get') {
+      const idx = Math.floor(Number(body.idx));
+      if (!(idx >= 0) || idx >= (t.files || []).length) return json({ error: 'no_file' }, 404);
+      const f = await tfStore.get(fKey(uid, tid, idx), { type: 'json' });
+      if (!f) return json({ error: 'no_file' }, 404);
+      return json({ name: f.name, type: f.type, data: f.data });
+    }
+    if (body.action === 'ticket_read') {
+      if (t.unreadUser) { t.unreadUser = false; await tkStore.setJSON(k, t); }
+      return json({ ok: true });
+    }
+    if (body.action === 'ticket_reply') {
+      if (t.status === 'closed') return json({ error: 'closed' }, 400);
+      const text = tText(body.text, T_MAX_TEXT);
+      if (!text) return json({ error: 'bad_value' }, 400);
+      if (t.messages.length >= T_MAX_MSGS) return json({ error: 'too_many' }, 400);
+      t.messages.push({ from: 'user', text, ts: now });
+      t.status = 'open'; t.unreadAdmin = true; t.updatedAt = now;
+      await tkStore.setJSON(k, t);
+      await notifyAdmins(origin, `💬 Новое сообщение в обращении «${t.subject}»\n${t.name}${t.username ? ' (@' + t.username + ')' : ''}\n\n${text.slice(0, 600)}`);
+      return json({ ok: true, ticket: ticketForUser(t) });
+    }
     return json({ error: 'unknown_action' }, 400);
   }
 
