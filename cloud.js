@@ -218,7 +218,7 @@
     if (leaders.list.length === 0) { note('пока никого нет'); return; }
 
     const medals = ['🥇', '🥈', '🥉'];
-    const addRow = (rank, name, total, isMe) => {
+    const addRow = (rank, name, total, isMe, photo) => {
       const row = document.createElement('div');
       row.className = 'upgrade-card';
       if (isMe) row.style.border = '1px solid rgba(255,209,102,0.5)';
@@ -229,7 +229,17 @@
 
       const avatar = document.createElement('div');
       avatar.style.cssText = 'width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#ff7e5f,#feb47b);display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;flex-shrink:0;';
-      avatar.textContent = (Array.from(name)[0] || '?').toUpperCase();
+      avatar.style.overflow = 'hidden';
+      const letter = (Array.from(name)[0] || '?').toUpperCase();
+      avatar.textContent = letter;
+      if (photo) {
+        const img = document.createElement('img');
+        img.referrerPolicy = 'no-referrer';
+        img.alt = '';
+        img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;transform:none;';
+        img.onload = () => { avatar.textContent = ''; avatar.appendChild(img); };
+        img.src = photo; // пока грузится (или если не загрузилась) остаётся буква
+      }
 
       const info = document.createElement('div');
       info.style.cssText = 'flex:1;min-width:0;margin-left:4px;';
@@ -248,15 +258,21 @@
       box.appendChild(row);
     };
 
+    const myPhoto = tgUser.photo_url || null;
     let meInList = false;
+    let shown = 0;
     leaders.list.forEach(p => {
       if (p.isMe) meInList = true;
-      addRow(p.rank, p.name, p.isMe ? myTotal : p.total, p.isMe);
+      const t = p.isMe ? myTotal : p.total;
+      if (!(t > 0)) return; // у кого 0 монет — в списке не показываем
+      shown++;
+      addRow(shown, p.name, t, p.isMe, p.isMe ? (myPhoto || p.photo) : p.photo);
     });
-    if (!meInList) {
+    if (!meInList && myTotal > 0) {
       note('· · ·');
-      addRow(null, nick, myTotal, true);
+      addRow(null, nick, myTotal, true, myPhoto);
     }
+    if (!shown && !(!meInList && myTotal > 0)) note('пока никого нет');
   }
 
   // подменяем заглушку «один игрок» из script.js на настоящую таблицу
