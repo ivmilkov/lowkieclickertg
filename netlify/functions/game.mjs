@@ -40,6 +40,7 @@ function verifyInitData(initData, botToken) {
   try {
     const user = JSON.parse(params.get('user') || 'null');
     if (!user || !user.id) return null;
+    user.start_param = String(params.get('start_param') || '').slice(0, 64);
     return user;
   } catch (e) {
     return null;
@@ -102,7 +103,7 @@ function applyAdminAction(st, act, value) {
     case 'resetNickname': st.nickname = 'telegram_nik'; st.nickOverride = false; return null;
     case 'holdToTap': st.holdToTap = !!value; return null;
     case 'resetState': {
-      const keepNick = st.nickname, keepOverride = st.nickOverride;
+      const keepNick = st.nickname, keepOverride = st.nickOverride, keepRefs = st.refs;
       for (const k of Object.keys(st)) delete st[k];
       Object.assign(st, {
         total: 0,
@@ -119,6 +120,7 @@ function applyAdminAction(st, act, value) {
       });
       if (keepNick) st.nickname = keepNick;
       if (keepOverride) st.nickOverride = keepOverride;
+      if (keepRefs) st.refs = keepRefs;
       return null;
     }
     default: return 'unknown_act';
@@ -302,6 +304,55 @@ async function tgSend(chatId, text, buttonText, buttonUrl) {
     clearTimeout(timer);
   } catch (e) { /* уведомление необязательное */ }
 }
+// ---------- рефералы ----------
+const REF_COINS = 100_000;      // монет за каждого приглашённого (и приглашённому тоже)
+const REF_INCOME = 1000;        // +к прибыли в час за каждого
+const REF_LIST_MAX = 100;       // сколько последних друзей показывать
+let botNameCache = null;
+async function botUsername() {
+  if (process.env.BOT_USERNAME) return String(process.env.BOT_USERNAME).replace(/^@/, '');
+  if (botNameCache) return botNameCache;
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/getMe`);
+    const j = await r.json();
+    if (j && j.ok && j.result && j.result.username) botNameCache = j.result.username;
+  } catch (e) {}
+  return botNameCache;
+}
+async function refLink(uid) {
+  const bot = await botUsername();
+  if (!bot) return null;
+  const app = String(process.env.APP_SHORT_NAME || '').replace(/[^A-Za-z0-9_]/g, '');
+  return `https://t.me/${bot}${app ? '/' + app : ''}?startapp=ref_${uid}`;
+}
+function emptyRefs() { return { count: 0, units: 0, list: [], by: null }; }
+function sanitizeRefs(r) {
+  const o = emptyRefs();
+  if (!r || typeof r !== 'object') return o;
+  o.count = Math.max(0, Math.trunc(Number(r.count)) || 0);
+  o.units = Math.max(0, Math.trunc(Number(r.units)) || 0);
+  o.list = Array.isArray(r.list) ? r.list.slice(0, REF_LIST_MAX) : [];
+  o.by = r.by && typeof r.by === 'object' ? r.by : null;
+  return o;
+}
+// Метка «этот аккаунт уже заходил в игру»: создаётся при самом первом обращении и больше не меняется,
+// поэтому по реферальной ссылке награду можно получить только один раз и только новому игроку.
+async function ensureRefMarker(refStore, store, user, hadProgress) {
+  const key = `r_${user.id}`;
+  const old = await refStore.get(key, { type: 'json' });
+  if (old) return old;
+  let by = null;
+  const m = /^ref_(\d{1,20})$/.exec(user.start_param || '');
+  if (m && m[1] !== String(user.id) && !hadProgress) {
+    const inv = await store.get(`u_${m[1]}`, { type: 'json' });
+    if (inv && inv.state) by = { id: m[1], n: inv.name || 'Игрок' };
+  }
+  const marker = { by, at: Date.now(), done: false };
+  await refStore.setJSON(key, marker);
+  return marker;
+}
+function addCoins(st, n) { st.total = Math.min(MAX_VALUE, Math.max(0, (Number(st.total) || 0) + n)); }
+
 const notifyAdmins = (origin, text) =>
   Promise.all(ADMIN_IDS.map(id => tgSend(id, text, 'открыть тикеты', origin + '/admin.html?tab=tickets')));
 
@@ -335,6 +386,7 @@ export default async (req) => {
   const tre = getStore({ name: 'treasury', consistency: 'strong' });
   const tkStore = getStore({ name: 'tickets', consistency: 'strong' });
   const tfStore = getStore({ name: 'ticketfiles', consistency: 'strong' });
+  const refStore = getStore({ name: 'referrals', consistency: 'strong' });
   const origin = new URL(req.url).origin;
   // ---------- админские запросы (только для ADMIN_IDS) ----------
   if (typeof body.action === 'string' && body.action.startsWith('admin_')) {
@@ -583,7 +635,17 @@ export default async (req) => {
   const key = `u_${user.id}`;
   const current = await store.get(key, { type: 'json' });
 
+  if (body.action === 'ref_info') {
+    const refs = sanitizeRefs(current && current.state && current.state.refs);
+    return json({
+      link: await refLink(user.id),
+      count: refs.count, units: refs.units, list: refs.list, by: refs.by,
+      coins: REF_COINS, income: REF_INCOME
+    });
+  }
+
   if (body.action === 'load') {
+    if (!current) { try { await ensureRefMarker(refStore, store, user, body.hadProgress === true); } catch (e) { console.error('ref marker failed', e); } }
     return json({ exists: !!current, record: publicRecord(current) || null });
   }
 
@@ -638,6 +700,23 @@ export default async (req) => {
       }
     }
 
+    // реферальные данные ведёт только сервер — присланные игрой не принимаем
+    let refMarker = null;
+    if (current && current.state && current.state.refs) st.refs = sanitizeRefs(current.state.refs);
+    else delete st.refs;
+    if (!current) {
+      try { refMarker = await ensureRefMarker(refStore, store, user, false); } catch (e) { console.error('ref marker failed', e); }
+      if (refMarker && (!refMarker.by || refMarker.done)) refMarker = null;
+    }
+    let refBonus = false;
+    if (refMarker) {
+      addCoins(st, REF_COINS);
+      const r = emptyRefs();
+      r.units = 1; r.by = { id: refMarker.by.id, n: refMarker.by.n, ts: Date.now() };
+      st.refs = r;
+      refBonus = true;
+    }
+
     const now = Date.now();
     const name = displayName(user);
     // обнуление (сброс прогресса) отражаем в таблице сразу, не дожидаясь паузы
@@ -662,6 +741,33 @@ export default async (req) => {
     applySpends(record, body.spends);
     await store.setJSON(key, record);
 
+    if (refBonus) {
+      // награда приглашённому уже записана — закрываем метку и начисляем пригласившему
+      try {
+        await refStore.setJSON(`r_${user.id}`, Object.assign({}, refMarker, { done: true, doneAt: now }));
+        const invKey = `u_${refMarker.by.id}`;
+        const inv = await store.get(invKey, { type: 'json' });
+        if (inv && inv.state) {
+          const refs = sanitizeRefs(inv.state.refs);
+          if (!refs.list.some(x => String(x.id) === String(user.id))) {
+            refs.count += 1; refs.units += 1;
+            refs.list.unshift({ id: String(user.id), n: name, ts: now });
+            refs.list = refs.list.slice(0, REF_LIST_MAX);
+            inv.state.refs = refs;
+            addCoins(inv.state, REF_COINS);
+            inv.rev = (inv.rev || 0) + 1;
+            inv.deviceId = 'referral';
+            inv.updatedAt = now;
+            await store.setJSON(invKey, inv);
+            try { await updateTop(lb, String(refMarker.by.id), inv.name || 'Игрок', Math.floor(Number(inv.state.total)), inv.photoUrl || null); } catch (e) {}
+            await tgSend(Number(refMarker.by.id), `по твоей ссылке в игру пришёл ${name}: +${REF_COINS.toLocaleString('ru-RU')} монет и +${REF_INCOME} к прибыли в час`);
+          }
+        }
+      } catch (e) {
+        console.error('referral reward failed', e);
+      }
+    }
+
     if (lbDue) {
       try {
         await updateTop(lb, String(user.id), name, Math.floor(Number(st.total)), safePhoto(user.photo_url));
@@ -669,6 +775,7 @@ export default async (req) => {
         console.error('leaderboard update failed', e);
       }
     }
+    if (refBonus) return json({ ok: true, rev: record.rev, bonus: true, record: publicRecord(record) });
     return json({ ok: true, rev: record.rev });
   }
 
