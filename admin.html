@@ -6,175 +6,145 @@
   <title>админ панель</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-    body { font-family:Inter, ui-sans-serif, system-ui, -apple-system,"Segoe UI",Roboto,Arial; background:#0f1724; color:#fff; text-align:center; padding:24px; }
-    input, button { padding:10px; margin:8px; border-radius:8px; border:none; font-size:14px; }
+    body { font-family:Inter, ui-sans-serif, system-ui, -apple-system,"Segoe UI",Roboto,Arial; background:#0f1724; color:#fff; text-align:center; padding:16px; margin:0; }
+    input, button { padding:10px; margin:6px; border-radius:8px; border:none; font-size:14px; }
     button { cursor:pointer; background:#ffd166; font-weight:bold; }
-    #panel { display:none; margin-top:16px; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    #panel { display:none; margin-top:12px; max-width:760px; margin-left:auto; margin-right:auto; }
     .row { margin:8px 0; }
     .small { color:#9aa6b2; font-size:13px; }
-    #status { margin-bottom:10px; color:#fff; }
     .danger { background:#ff6b6b; color:#071226; }
     .muted { color:#9aa6b2; font-size:13px; display:block; margin-top:6px; }
     #mode { color:#9aa6b2; font-size:12px; margin-bottom:12px; }
+    h3 { margin:10px 0 4px; }
+
+    .box { background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:12px; padding:12px; margin:10px 0; }
+    #search { width:calc(100% - 12px); box-sizing:border-box; background:rgba(0,0,0,.3); color:#fff; border:1px solid rgba(255,255,255,.1); }
+    #playersList { max-height:300px; overflow-y:auto; text-align:left; }
+    .pl { display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:10px; cursor:pointer; border:1px solid transparent; }
+    .pl:hover { background:rgba(255,255,255,0.05); }
+    .pl.sel { border-color:#ffd166; background:rgba(255,209,102,0.08); }
+    .pl .rk { width:28px; color:#9aa6b2; font-weight:700; text-align:center; flex-shrink:0; }
+    .pl .nm { flex:1; min-width:0; }
+    .pl .nm b { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .pl .nm span { color:#9aa6b2; font-size:12px; }
+    .pl .bl { text-align:right; font-size:13px; color:#ffd166; font-weight:700; flex-shrink:0; }
+    .pl .bl i { display:block; font-style:normal; color:#6fd3ff; font-weight:600; }
+
+    #info { text-align:left; font-size:14px; line-height:1.7; }
+    #info b { color:#ffd166; }
 
     /* Стиль только для тумблера автофарма */
-    .switch {
-      position: relative;
-      display: inline-block;
-      width: 50px;
-      height: 26px;
-      vertical-align: middle;
-      margin: 0 10px;
-    }
-    .switch input {
-      opacity: 0;
-      width: 0;
-      height: 0;
-    }
-    .slider {
-      position: absolute;
-      cursor: pointer;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background-color: #2a3547;
-      transition: .4s;
-      border-radius: 34px;
-    }
-    .slider:before {
-      position: absolute;
-      content: "";
-      height: 18px;
-      width: 18px;
-      left: 4px;
-      bottom: 4px;
-      background-color: white;
-      transition: .4s;
-      border-radius: 50%;
-    }
-    input:checked + .slider {
-      background-color: #ffd166;
-    }
-    input:checked + .slider:before {
-      transform: translateX(24px);
-    }
+    .switch { position: relative; display: inline-block; width: 50px; height: 26px; vertical-align: middle; margin: 0 10px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #2a3547; transition: .4s; border-radius: 34px; }
+    .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+    input:checked + .slider { background-color: #ffd166; }
+    input:checked + .slider:before { transform: translateX(24px); }
 </style>
 </head>
 <body>
   <h2>админ панель</h2>
   <div id="mode">загрузка…</div>
-
   <div id="denied" style="display:none; color:#ff6b6b; margin-top:20px;"></div>
 
   <div id="panel">
-    <div id="status">
-      текущее: <span id="curCoins">—</span> монет, <span id="curDiamonds">—</span> алмазов
-    </div>
-    <button onclick="reloadStatus()">обновить данные</button>
 
-    <div class="row">
-      <h3>монеты</h3>
-      <input type="number" id="coins" placeholder="число монет"><br>
-      <button onclick="setCoins()">установить баланс</button>
-      <button onclick="addCoins()">добавить к балансу</button>
+    <div class="box">
+      <h3>игроки (<span id="plCount">0</span>)</h3>
+      <input type="text" id="search" placeholder="поиск по имени, @username, нику или id" oninput="renderPlayers()">
+      <div><button onclick="loadPlayers()">обновить список</button></div>
+      <div id="playersList"></div>
     </div>
 
-    <div class="row">
-      <h3>сжечь монеты (сжигаловка)</h3>
-      <input type="number" id="burnAmount" placeholder="сколько сжечь (целое число)"><br>
-      <button onclick="burnCoins()">сжечь</button>
-    </div>
+    <div id="editor" style="display:none">
+      <div class="box">
+        <h3 id="selTitle">—</h3>
+        <div id="info"></div>
+      </div>
 
-    <div class="row">
-      <h3>алмазы</h3>
-      <input type="number" id="diamonds" placeholder="число алмазов"><br>
-      <button onclick="setDiamonds()">установить баланс</button>
-      <button onclick="addDiamonds()">добавить к балансу</button>
-    </div>
+      <div class="row">
+        <h3>монеты</h3>
+        <input type="number" id="coins" placeholder="число монет"><br>
+        <button onclick="op('setCoins', val('coins'))">установить баланс</button>
+        <button onclick="op('addCoins', val('coins'))">добавить к балансу</button>
+      </div>
 
-    <div class="row">
-      <h3>бонус за клик</h3>
-      <input type="number" id="clickBonus" placeholder="бонус за клик"><br>
-      <button onclick="setClickBonus()">установить</button>
-      <button onclick="addClickBonus()">добавить</button>
-    </div>
+      <div class="row">
+        <h3>сжечь монеты (сжигаловка)</h3>
+        <input type="number" id="burnAmount" placeholder="сколько сжечь (целое число)"><br>
+        <button onclick="burn()">сжечь</button>
+      </div>
 
-    <div class="row">
-      <h3>бусты</h3>
-      <button onclick="maxBoost()">открыть все бусты</button>
-    </div>
+      <div class="row">
+        <h3>алмазы</h3>
+        <input type="number" id="diamonds" placeholder="число алмазов"><br>
+        <button onclick="op('setDiamonds', val('diamonds'))">установить баланс</button>
+        <button onclick="op('addDiamonds', val('diamonds'))">добавить к балансу</button>
+      </div>
 
-    <div class="row">
-      <h3>никнейм игрока</h3>
-      <input type="text" id="newNick" placeholder="новый ник"><br>
-      <button onclick="setNickname()">изменить ник</button>
-      <button onclick="resetNickname()">вернуть стандартный</button>
-    </div>
+      <div class="row">
+        <h3>бонус за клик</h3>
+        <input type="number" id="clickBonus" placeholder="бонус за клик"><br>
+        <button onclick="op('setClickBonus', val('clickBonus'))">установить</button>
+        <button onclick="op('addClickBonus', val('clickBonus'))">добавить</button>
+      </div>
 
-    <div class="row">
-      <h3>сброс</h3>
-      <div class="small">сбросит весь прогресс игры (монеты, алмазы, апгрейды, энергия и т.д.) к стандартным значениям.</div>
-      <button class="danger" onclick="resetState()">сбросить прогресс</button>
-    </div>
+      <div class="row">
+        <h3>бусты</h3>
+        <button onclick="op('maxBoost')">открыть все бусты</button>
+      </div>
 
-    <!-- БЛОК: Настройки автофарма -->
-    <div class="row">
-      <h3>автофарм (клики по зажатию)</h3>
-      <span class="muted">при зажатии/ведении по картинке монеты будут автоматически фармиться</span>
-      <div style="margin: 10px 0;">
-        <span class="small">выкл</span>
-        <label class="switch">
-          <input type="checkbox" id="holdToTapToggle" onchange="toggleHoldToTap()">
-          <span class="slider"></span>
-        </label>
-        <span class="small" style="color: #ffd166;">вкл</span>
+      <div class="row">
+        <h3>никнейм игрока в игре</h3>
+        <input type="text" id="newNick" placeholder="новый ник"><br>
+        <button onclick="setNick()">изменить ник</button>
+        <button onclick="op('resetNickname')">вернуть стандартный</button>
+        <span class="muted">в таблице лидеров всегда имя из Telegram</span>
+      </div>
+
+      <div class="row">
+        <h3>автофарм (клики по зажатию)</h3>
+        <span class="muted">при зажатии/ведении по картинке монеты будут автоматически фармиться</span>
+        <div style="margin: 10px 0;">
+          <span class="small">выкл</span>
+          <label class="switch">
+            <input type="checkbox" id="holdToTapToggle" onchange="op('holdToTap', this.checked, true)">
+            <span class="slider"></span>
+          </label>
+          <span class="small" style="color: #ffd166;">вкл</span>
+        </div>
+      </div>
+
+      <div class="row">
+        <h3>сброс</h3>
+        <div class="small">сбросит весь прогресс выбранного игрока (монеты, алмазы, апгрейды, энергия и т.д.) к стандартным значениям.</div>
+        <button class="danger" onclick="resetPlayer()">сбросить прогресс</button>
       </div>
     </div>
   </div>
 
 <script>
-    const STORAGE_KEY = "lowkie_clicker_v2";
-
-    // ---------- режим: синхронизация с Telegram или локально ----------
     const tg = window.Telegram && window.Telegram.WebApp;
     const initData = tg && tg.initData;
-    const CLOUD = !!initData;
     const API = '/.netlify/functions/game';
-    // у админки свой id устройства, чтобы игра на других устройствах видела её правки как «чужие» и подтягивала их
-    const deviceId = 'admin_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-    const cloud = { rev: 0, state: null, extra: {}, loaded: false };
+    const MY_ID = tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? String(tg.initDataUnsafe.user.id) : null;
 
-    if (CLOUD) { try { tg.ready(); tg.expand(); } catch (e) {} }
+    let players = [];
+    let selectedId = null;
+    const details = {}; // полное состояние игроков (admin_get)
+
+    if (initData) { try { tg.ready(); tg.expand(); } catch (e) {} }
 
     async function api(payload) {
       const res = await fetch(API, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(Object.assign({ initData, deviceId }, payload))
+        body: JSON.stringify(Object.assign({ initData }, payload))
       });
       let data = null;
       try { data = await res.json(); } catch (e) {}
       return { status: res.status, ok: res.ok, data };
-    }
-
-    // подтянуть свежий прогресс с сервера
-    async function loadCloud() {
-      try {
-        const r = await api({ action: 'load' });
-        if (!r.ok) throw new Error('load ' + r.status);
-        if (r.data.exists) {
-          cloud.state = r.data.record.state;
-          cloud.rev = r.data.record.rev;
-          cloud.extra = r.data.record.extra || {};
-        } else {
-          cloud.state = null;
-          cloud.rev = 0;
-        }
-        cloud.loaded = true;
-        return !!cloud.state;
-      } catch (e) {
-        cloud.loaded = false;
-        document.getElementById('mode').textContent = 'нет связи с сервером';
-        return false;
-      }
     }
 
     function deny(text) {
@@ -184,274 +154,155 @@
       d.style.display = 'block';
     }
 
-    function getState() {
-      if (CLOUD) return cloud.state;
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return null;
-      try {
-        const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === 'object' ? parsed : null;
-      } catch (e) {
-        return null;
-      }
+    const pname = p => p.name || p.username || p.nickname || ('id ' + p.id);
+    const fmt = n => { try { return Number(n).toLocaleString('ru-RU'); } catch (e) { return String(n); } };
+    const val = id => document.getElementById(id).value;
+    const sel = () => players.find(p => String(p.id) === String(selectedId));
+
+    function ago(ts) {
+      if (!ts) return 'неизвестно';
+      const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+      if (s < 60) return 'только что';
+      if (s < 3600) return Math.floor(s / 60) + ' мин назад';
+      if (s < 86400) return Math.floor(s / 3600) + ' ч назад';
+      return Math.floor(s / 86400) + ' дн назад';
     }
 
-    // сохранить состояние (на сервер в Telegram, иначе локально)
-    async function saveState(st, silent) {
-      if (CLOUD) {
-        try {
-          const r = await api({ action: 'save', baseRev: cloud.rev, state: st, extra: cloud.extra });
-          if (r.status === 409) {
-            await loadCloud();
-            refreshStatus();
-            alert("пока ты редактировал, прогресс на сервере изменился (игра сохранила тапы). данные обновлены — нажми ещё раз");
-            return;
-          }
-          if (!r.ok) throw new Error('save ' + r.status);
-          cloud.state = st;
-          cloud.rev = r.data.rev;
-          if (!silent) alert("сохранено! откройте игру — изменения подтянутся на всех устройствах");
-          refreshStatus();
-        } catch (e) {
-          alert("ошибка при сохранении: " + (e && e.message ? e.message : e));
-        }
-        return;
-      }
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(st));
-        if (!silent) alert("сохранено!");
-        refreshStatus();
-      } catch (e) {
-        alert("ошибка при сохранении: " + (e && e.message ? e.message : e));
-      }
+    // ---------- список игроков ----------
+    async function loadPlayers() {
+      const r = await api({ action: 'admin_list' });
+      if (!r.ok) { alert('не удалось загрузить игроков (' + r.status + ')'); return; }
+      players = r.data.players || [];
+      if (!selectedId && MY_ID && players.some(p => String(p.id) === MY_ID)) selectedId = MY_ID;
+      renderPlayers();
+      renderEditor();
+      if (selectedId) fetchDetails(String(selectedId));
     }
 
-    // единый шаблон действия: свежие данные -> изменить -> сохранить
-    async function act(mutate, silent) {
-      if (CLOUD) {
-        const ok = await loadCloud();
-        if (!ok) return alert("нет сохранений (сначала открой игру в этом боте хотя бы один раз)");
-      }
-      const st = getState();
-      if (!st) return alert("нет сохранений");
-      const res = mutate(st);
-      if (res === false) return;
-      await saveState(st, silent);
-    }
+    function renderPlayers() {
+      const q = document.getElementById('search').value.trim().toLowerCase().replace(/^@/, '');
+      const box = document.getElementById('playersList');
+      document.getElementById('plCount').textContent = players.length;
+      box.innerHTML = '';
+      const list = players.filter(p => !q ||
+        [pname(p), p.username, p.nickname, String(p.id)].some(x => x && String(x).toLowerCase().includes(q)));
+      if (!list.length) { box.innerHTML = '<div class="small" style="padding:12px;text-align:center">никого не найдено</div>'; return; }
+      list.forEach((p, i) => {
+        const row = document.createElement('div');
+        row.className = 'pl' + (String(p.id) === String(selectedId) ? ' sel' : '');
+        row.onclick = () => { selectedId = String(p.id); renderPlayers(); renderEditor(); fetchDetails(String(p.id)); };
 
-    async function reloadStatus() {
-      if (CLOUD) await loadCloud();
-      refreshStatus();
-    }
+        const rk = document.createElement('div'); rk.className = 'rk'; rk.textContent = String(i + 1);
+        const nm = document.createElement('div'); nm.className = 'nm';
+        const b = document.createElement('b'); b.textContent = pname(p) + (String(p.id) === MY_ID ? ' (вы)' : '');
+        const sp = document.createElement('span');
+        sp.textContent = (p.username ? '@' + p.username : 'без username') + ' · ' + p.id;
+        nm.appendChild(b); nm.appendChild(sp);
+        const bl = document.createElement('div'); bl.className = 'bl';
+        bl.textContent = fmt(p.total) + ' мон.';
+        const di = document.createElement('i'); di.textContent = fmt(p.diamonds) + ' алм.';
+        bl.appendChild(di);
 
-    function refreshStatus() {
-      const modeEl = document.getElementById('mode');
-      if (CLOUD && cloud.loaded) {
-        const u = (tg.initDataUnsafe && tg.initDataUnsafe.user) || {};
-        modeEl.textContent = 'режим: синхронизация с Telegram' + (u.id ? ' (id ' + u.id + ')' : '');
-      } else if (!CLOUD) {
-        modeEl.textContent = 'режим: локально (вне Telegram)';
-      }
-
-      const st = getState();
-      const coinsEl = document.getElementById("curCoins");
-      const diamondsEl = document.getElementById("curDiamonds");
-      if (!st) {
-        coinsEl.textContent = "нет";
-        diamondsEl.textContent = "нет";
-        return;
-      }
-      const coins = Number(st.total || 0);
-      const diamonds = Number((st.diamonds && st.diamonds.total) || 0);
-      try {
-        coinsEl.textContent = coins.toLocaleString('ru-RU');
-        diamondsEl.textContent = diamonds.toLocaleString('ru-RU');
-      } catch (e) {
-        coinsEl.textContent = String(coins);
-        diamondsEl.textContent = String(diamonds);
-      }
-
-      // Обновляем состояние тумблера автофарма в зависимости от БД
-      const toggle = document.getElementById("holdToTapToggle");
-      if (toggle) {
-        toggle.checked = !!st.holdToTap;
-      }
-    }
-
-    function ensureDiamondsField(st){
-      if (!st.diamonds || typeof st.diamonds !== 'object') {
-        st.diamonds = { total: 0, lastTs: Date.now(), upgrades: {} };
-      } else {
-        if (typeof st.diamonds.total !== 'number') st.diamonds.total = Number(st.diamonds.total) || 0;
-        if (!('lastTs' in st.diamonds) || !st.diamonds.lastTs) st.diamonds.lastTs = Date.now();
-        if (!st.diamonds.upgrades || typeof st.diamonds.upgrades !== 'object') st.diamonds.upgrades = {};
-      }
-    }
-
-    function setCoins() {
-      const val = parseInt(document.getElementById("coins").value, 10);
-      if (isNaN(val)) return alert("введи корректное число");
-      act(st => { st.total = Math.max(0, val); });
-    }
-
-    function addCoins() {
-      const add = parseInt(document.getElementById("coins").value, 10);
-      if (isNaN(add)) return alert("введи корректное число");
-      act(st => {
-        st.total = (Number(st.total) || 0) + add;
-        if (st.total < 0) st.total = 0;
+        row.appendChild(rk); row.appendChild(nm); row.appendChild(bl);
+        box.appendChild(row);
       });
     }
 
-    function setDiamonds() {
-      const val = parseInt(document.getElementById("diamonds").value, 10);
-      if (isNaN(val)) return alert("введи корректное число");
-      act(st => {
-        ensureDiamondsField(st);
-        st.diamonds.total = Math.max(0, val);
-        if (!st.diamonds.lastTs) st.diamonds.lastTs = Date.now();
-      });
+    async function fetchDetails(id) {
+      const r = await api({ action: 'admin_get', targetId: id });
+      if (r.ok) {
+        details[id] = r.data.state;
+        const i = players.findIndex(x => String(x.id) === id);
+        if (i >= 0) players[i] = r.data.summary;
+        if (String(selectedId) === id) { renderPlayers(); renderEditor(); }
+      }
     }
 
-    function addDiamonds() {
-      const add = parseInt(document.getElementById("diamonds").value, 10);
-      if (isNaN(add)) return alert("введи корректное число");
-      act(st => {
-        ensureDiamondsField(st);
-        st.diamonds.total = (Number(st.diamonds.total) || 0) + add;
-        if (st.diamonds.total < 0) st.diamonds.total = 0;
-        if (!st.diamonds.lastTs) st.diamonds.lastTs = Date.now();
-      });
-    }
-
-    function setClickBonus() {
-      const val = parseInt(document.getElementById("clickBonus").value, 10);
-      if (isNaN(val)) return alert("введи корректное число");
-      act(st => { st.bonus = val; });
-    }
-
-    function addClickBonus() {
-      const add = parseInt(document.getElementById("clickBonus").value, 10);
-      if (isNaN(add)) return alert("введи корректное число");
-      act(st => { st.bonus = (Number(st.bonus) || 0) + add; });
-    }
-
-    function maxBoost() {
-      act(st => {
-        if (!st.upgrades || typeof st.upgrades !== 'object') st.upgrades = {};
-        st.upgrades.plus20 = true;
-        st.upgrades.miniBoost = true;
-        if (!st.multiclick || typeof st.multiclick !== 'object') st.multiclick = { totalBonus: 0, currentTier: 0, purchasesInTier: 0 };
-        st.multiclick.totalBonus = Math.max(0, Number(st.multiclick.totalBonus) || 0) + 999999;
-        if (!st.passive || typeof st.passive !== 'object') st.passive = { level: 0, lastTs: Date.now() };
-        st.passive.level = Math.max(st.passive.level || 0, 15);
-      });
-    }
-
-    // Изменение статуса автофарма
-    function toggleHoldToTap() {
-      const checked = document.getElementById("holdToTapToggle").checked;
-      act(st => { st.holdToTap = checked; }, true);
-    }
-
-    // сброс прогресса
-    async function resetState() {
-      const ok = confirm("точно сбросить прогресс? это действие удалит монеты, алмазы, апгрейды и вернёт игру к начальным значениям.");
-      if (!ok) return;
-      const defaultState = {
-        total: 0,
-        bonus: 0,
-        upgrades: { plus20: false, miniBoost: false },
-        skins: { owned: {}, equipped: null },
-        diamonds: { total: 0, lastTs: Date.now(), upgrades: {} },
-        passive: { level: 0, lastTs: Date.now() },
-        energyCurrent: 100,
-        lastEnergyRegen: Date.now(),
-        lastTapTs: 0,
-        multiclick: { totalBonus: 0, currentTier: 0, purchasesInTier: 0 },
-        holdToTap: false
+    function renderEditor() {
+      const p = sel();
+      const ed = document.getElementById('editor');
+      if (!p) { ed.style.display = 'none'; return; }
+      ed.style.display = 'block';
+      document.getElementById('selTitle').textContent = pname(p) + (String(p.id) === MY_ID ? ' (вы)' : '');
+      const info = document.getElementById('info');
+      info.innerHTML = '';
+      const add = (label, value) => {
+        const d = document.createElement('div');
+        const b = document.createElement('b'); b.textContent = label + ': ';
+        d.appendChild(b); d.appendChild(document.createTextNode(value));
+        info.appendChild(d);
       };
-      if (CLOUD) {
-        await loadCloud(); // нужен актуальный номер версии
-        const prev = cloud.state;
-        if (prev && prev.nickname) defaultState.nickname = prev.nickname;
-        if (prev && prev.nickOverride) defaultState.nickOverride = prev.nickOverride;
-        await saveState(defaultState, true);
-        alert("прогресс сброшен");
-        return;
+      const st = details[String(p.id)] || null;
+      add('Telegram id', String(p.id));
+      add('username', p.username ? '@' + p.username : '—');
+      add('ник в игре', p.nickname || '—');
+      add('монеты', fmt(p.total));
+      add('алмазы', fmt(p.diamonds));
+      if (st) {
+        add('бонус за клик', fmt(Number(st.bonus) || 0));
+        add('уровень пассива', String((st.passive && st.passive.level) || 0));
+        add('энергия', fmt(Number(st.energyCurrent) || 0));
+        add('скин', (st.skins && st.skins.equipped) || 'стандартный');
+        document.getElementById('holdToTapToggle').checked = !!st.holdToTap;
+      } else {
+        add('остальное', 'загрузка…');
       }
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultState));
-        alert("прогресс сброшен");
-        refreshStatus();
-      } catch (e) {
-        alert("ошибка при сбросе: " + (e && e.message ? e.message : e));
+      add('последнее сохранение', ago(p.updatedAt));
+    }
+
+    // ---------- действия над выбранным игроком ----------
+    async function op(name, value, silent) {
+      const p = sel();
+      if (!p) return alert('выбери игрока');
+      if (value !== undefined && typeof value === 'string' && name !== 'setNickname') {
+        if (value.trim() === '' || isNaN(Number(value))) return alert('введи корректное число');
       }
+      const r = await api({ action: 'admin_update', targetId: String(p.id), act: name, value });
+      if (!r.ok) {
+        const e = r.data && r.data.error;
+        return alert(e === 'bad_value' ? 'некорректное значение' : 'ошибка: ' + (e || r.status));
+      }
+      const i = players.findIndex(x => String(x.id) === String(p.id));
+      if (i >= 0) players[i] = r.data.summary;
+      details[String(p.id)] = r.data.state;
+      renderPlayers();
+      renderEditor();
+      if (!silent) alert('сохранено! игрок увидит изменения при следующем открытии игры (или в течение минуты)');
     }
 
-    function getPositiveIntFrom(id) {
-      const raw = document.getElementById(id).value;
-      const v = parseInt(raw, 10);
-      if (isNaN(v)) return NaN;
-      return Math.max(0, v);
+    function burn() {
+      const p = sel();
+      if (!p) return alert('выбери игрока');
+      const amount = Math.floor(Number(val('burnAmount')));
+      if (!amount || amount <= 0) return alert('введите число больше нуля');
+      if (p.total <= 0) return alert('баланс уже равен 0');
+      if (!confirm(`сжечь ${fmt(amount)} монет у «${pname(p)}»? Это необратимо.`)) return;
+      op('burnCoins', amount);
     }
 
-    function burnCoins() {
-      const amount = getPositiveIntFrom('burnAmount');
-      if (isNaN(amount)) return alert("введи корректное целое число для сжигания");
-      if (amount <= 0) return alert("введите число больше нуля");
-      act(st => {
-        const current = Number(st.total || 0);
-        if (current <= 0) { alert("баланс уже равен 0"); return false; }
-        if (!confirm(`подтвердите сжигание ${amount.toLocaleString('ru-RU')} монет. Это действие необратимо.`)) return false;
-        st.total = Math.max(0, current - amount);
-      });
+    function setNick() {
+      const v = val('newNick');
+      if (!v.trim()) return alert('введите ник');
+      op('setNickname', v);
     }
 
-    function burnAll() {
-      act(st => {
-        const current = Number(st.total || 0);
-        if (current <= 0) { alert("баланс уже равен 0"); return false; }
-        if (!confirm(`подтвердите сжигание ВСЕХ монет (${current.toLocaleString('ru-RU')}). Это действие необратимо.`)) return false;
-        st.total = 0;
-      });
+    function resetPlayer() {
+      const p = sel();
+      if (!p) return alert('выбери игрока');
+      if (!confirm(`точно сбросить прогресс игрока «${pname(p)}»? Это удалит монеты, алмазы, апгрейды и вернёт игру к начальным значениям.`)) return;
+      op('resetState');
     }
 
-    function setNickname() {
-      const val = document.getElementById("newNick").value;
-      if (!val) return alert("введите ник");
-      act(st => {
-        st.nickname = val;
-        st.nickOverride = true; // игра не будет подменять ник на телеграмный
-      });
-    }
-
-    function resetNickname() {
-      act(st => {
-        st.nickname = 'telegram_nik';
-        st.nickOverride = false; // игра снова возьмёт ник из Telegram
-      });
-    }
-
-    (async function start(){
+    (async function start() {
       try {
-        if (!CLOUD) {
-          deny('открой админку через Telegram (в боте)');
-          return;
-        }
+        if (!initData) { deny('открой админку через Telegram (в боте)'); return; }
         const w = await api({ action: 'whoami' });
-        if (!w.ok) {
-          deny('не удалось проверить доступ, попробуй позже');
-          return;
-        }
-        if (!w.data.isAdmin) {
-          deny('доступ запрещён');
-          return;
-        }
+        if (!w.ok) { deny('не удалось проверить доступ, попробуй позже'); return; }
+        if (!w.data.isAdmin) { deny('доступ запрещён'); return; }
+        document.getElementById('mode').textContent = 'режим: админ (Telegram id ' + MY_ID + ')';
         document.getElementById('panel').style.display = 'block';
-        await loadCloud();
-        refreshStatus();
-      } catch(e) {
+        await loadPlayers();
+      } catch (e) {
         deny('ошибка загрузки админки');
       }
     })();

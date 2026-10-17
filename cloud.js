@@ -300,6 +300,18 @@
   });
   window.addEventListener('pagehide', () => push(true));
 
+  // раз в 45 сек проверяем, не изменил ли прогресс админ или другое устройство
+  setInterval(async () => {
+    if (!ready || inflight || dirty || adopting || document.visibilityState !== 'visible') return;
+    try {
+      const r = await api({ action: 'load' });
+      if (r.ok && r.data.exists && !dirty && !inflight) {
+        const rec = r.data.record;
+        if (rec.rev > meta.rev && rec.deviceId !== deviceId) adopt(rec);
+      }
+    } catch (e) {}
+  }, 45000);
+
   init().then(hideOverlay).catch(e => {
     console.warn('[cloud] нет связи, играем локально', e);
     overlay.textContent = 'нет связи с сервером, играем офлайн';
