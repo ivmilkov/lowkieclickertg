@@ -351,6 +351,13 @@ async function ensureRefMarker(refStore, store, user, hadProgress) {
   await refStore.setJSON(key, marker);
   return marker;
 }
+// запись в «историю операций» игрока (только фиксированный текст — игра выводит историю как HTML)
+function pushHistory(st, title, amount) {
+  if (!Array.isArray(st.history)) st.history = [];
+  st.history.unshift({ id: Date.now() + String(Math.random()).slice(2, 6), type: 'income', title, amount, date: Date.now() });
+  if (st.history.length > 500) st.history.length = 500;
+}
+const REF_AMOUNT = `+${REF_COINS.toLocaleString('ru-RU')} монет и +${REF_INCOME} к прибыли в час`;
 function addCoins(st, n) { st.total = Math.min(MAX_VALUE, Math.max(0, (Number(st.total) || 0) + n)); }
 
 const notifyAdmins = (origin, text) =>
@@ -753,6 +760,7 @@ export default async (req) => {
     let refBonus = false;
     if (refMarker) {
       addCoins(st, REF_COINS);
+      pushHistory(st, 'Реферальная система: ты пришёл по приглашению', REF_AMOUNT);
       const r = emptyRefs();
       r.units = 1; r.by = { id: refMarker.by.id, n: refMarker.by.n, ts: Date.now() };
       st.refs = r;
@@ -797,6 +805,7 @@ export default async (req) => {
             refs.list = refs.list.slice(0, REF_LIST_MAX);
             inv.state.refs = refs;
             addCoins(inv.state, REF_COINS);
+            pushHistory(inv.state, 'Реферальная система: новый друг в игре', REF_AMOUNT);
             inv.rev = (inv.rev || 0) + 1;
             inv.deviceId = 'referral';
             inv.updatedAt = now;
