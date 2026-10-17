@@ -118,7 +118,7 @@
 одна из них - «маленький лоуки» - за 10 секунд ловишь летающих лоуки (+5 монет за каждого, можно прокачать до +1000), но помимо лоуки летают и бомбы по которым если нажмешь то игра закончится.<br>
 есть колесо фортуны, тоже в развлечениях, где выпадают монеты, алмазы, прокачка за клик и энергия. крутить можно раз в 24 часа.<br>
 также есть скины для лоуки, они заменяют изображение по которому ты тапаешь. сейчас всего два, купить можно во вкладке улучшения\скины.<br>
-игра всё ещё в бета-тесте: нет телеграм-интеграции и реферальной системы. дальше будет больше.</p>
+игра всё ещё в бета-тесте. дальше будет больше.</p>
       </div>
       <div class="ach" style="margin-top:10px;">
         <strong>что такое лоуки</strong>
@@ -281,12 +281,16 @@
     </section>
 
     <section id="friends" class="panel" style="display:none">
-      <div class="ach" style="margin-bottom:20px;">
+      <div class="ach" style="margin-bottom:20px;" id="refBox">
   <strong>реферальная система</strong>
-  <p style="color:var(--muted)">приглашай друзей в игру по твоей уникальной реферальной ссылке и получай по 100.000 монет и +1000 к прибыли в час за каждого друга. (функция в разработке и в бетатесте. нужна база данных, ее пока что нет)</p>
-  <div style="display:flex; justify-content:start; margin-top:12px;">
-    <button class="btn btn-disabled" style="cursor:not-allowed;">пригласить друга</button>
+  <p style="color:var(--muted)">приглашай друзей по своей реферальной ссылке и получай по 100 000 монет и +1000 к прибыли в час за каждого нового игрока. друг тоже получает 100 000 монет и +1000 к прибыли в час, если запускает игру по ссылке впервые. награда выдаётся один раз за каждого друга: по ссылке не получится награду повторно, а те, кто уже играл раньше, бонус не получают.</p>
+  <div id="refStats" style="color:var(--muted);font-size:14px;margin-top:8px;">доступно в Telegram</div>
+  <input id="refLink" type="text" readonly style="display:none;width:100%;box-sizing:border-box;margin-top:10px;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.25);color:#fff;font-size:13px;">
+  <div id="refBtns" style="display:none;gap:10px;flex-wrap:wrap;margin-top:12px;">
+    <button id="refInviteBtn" class="btn btn-start">пригласить друга</button>
+    <button id="refCopyBtn" class="btn" style="background:#2a3140;color:#fff;">скопировать ссылку</button>
   </div>
+  <div id="refList" style="display:flex;flex-direction:column;gap:6px;margin-top:12px;"></div>
 </div>
 
 <div class="ach">
@@ -578,10 +582,10 @@
         <div class="faq-item">
             <details>
                 <summary class="faq-question">Почему с одного аккаунта в Телеграме на разных устройствах разный прогресс? Почему не работает реферальная система и топ игроков?</summary>
-                <div class="faq-answer">Да. Прогресс, лидерборд и обращения в поддержку привязаны к твоему аккаунту Telegram и хранятся на сервере, поэтому на всех устройствах ты увидишь одно и то же.</div>
+                <div class="faq-answer">Прогресс, лидерборд, реферальная система и обращения в поддержку привязаны к твоему аккаунту Telegram и хранятся на сервере, поэтому на всех устройствах ты видишь одно и то же. Если что-то не обновилось, закрой игру и открой заново.</div>
             <details>
                 <summary class="faq-question">Планируется ли интеграция с телеграмом?</summary>
-                <div class="faq-answer">Да, в будущем мы обязательно это реализуем, это даже одна из главных целей нашего проекта, просто сейчас мы не знаем как это реализовать.</div>
+                <div class="faq-answer">Да, она уже работает: прогресс, лидеры, друзья и поддержка привязаны к аккаунту Telegram.</div>
             </details>
         </div>
         <div class="faq-item">

@@ -189,6 +189,12 @@
         return;
       }
       if (!r.ok) throw new Error('save ' + r.status);
+      if (r.data.bonus && r.data.record) {
+        // игрок пришёл по реферальной ссылке: сервер начислил бонус — берём его версию прогресса
+        try { sessionStorage.setItem('lowkie_ref_welcome', '1'); } catch (e) {}
+        adopt(r.data.record);
+        return;
+      }
       writeMeta({ uid, rev: r.data.rev });
       if (spends.length) {
         const sent = new Set(spends.map(x => x.id));
@@ -205,10 +211,10 @@
   }
 
   async function init() {
-    const r = await api({ action: 'load' });
-    if (!r.ok) throw new Error('load ' + r.status);
-
     const localTotal = Number(state.total) || 0;
+    // если на устройстве уже есть прогресс (играл до обновления) — это не новый игрок, реферальный бонус ему не положен
+    const r = await api({ action: 'load', hadProgress: localTotal > 0 });
+    if (!r.ok) throw new Error('load ' + r.status);
 
     if (!r.data.exists) {
       // первый вход с этого аккаунта: заливаем текущий локальный прогресс на сервер
@@ -250,6 +256,7 @@
     }
     try { updateUI(); } catch (e) {}
     push();
+    setTimeout(() => { try { refAfterReady(); } catch (e) { console.warn('[cloud] ref', e); } }, 300);
     setTimeout(() => { try { ticketsAfterReady(); } catch (e) { console.warn('[cloud] tickets', e); } }, 400);
   }
 
@@ -387,6 +394,74 @@
       }
     } catch (e) {}
   }, 45000);
+
+  // =====================================================================
+  // РЕФЕРАЛЬНАЯ СИСТЕМА: ссылка, статистика, список друзей (всё считает сервер)
+  // =====================================================================
+  let refData = null;
+  const refEl = id => document.getElementById(id);
+  const fmtN = n => Number(n || 0).toLocaleString('ru-RU');
+
+  function renderRef() {
+    const stats = refEl('refStats'), link = refEl('refLink'), btns = refEl('refBtns'), list = refEl('refList');
+    if (!stats || !refData) return;
+    const d = refData;
+    const lines = [];
+    lines.push('приглашено друзей: ' + d.count + ' · бонус к прибыли: +' + fmtN(d.units * d.income) + ' в час');
+    if (d.by) lines.push('ты пришёл по ссылке игрока ' + d.by.n + ' и получил ' + fmtN(d.coins) + ' монет');
+    stats.textContent = lines.join('\n');
+    stats.style.whiteSpace = 'pre-line';
+    if (d.link) {
+      link.value = d.link; link.style.display = 'block'; btns.style.display = 'flex';
+    } else {
+      link.style.display = 'none'; btns.style.display = 'none';
+      stats.textContent += '\nссылка пока недоступна, попробуй позже';
+    }
+    list.innerHTML = '';
+    (d.list || []).forEach(f => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;justify-content:space-between;gap:8px;font-size:13px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.03);';
+      const n = document.createElement('span'); n.textContent = f.n || 'Игрок';
+      const t = document.createElement('span'); t.style.color = 'var(--muted)';
+      try { t.textContent = new Date(f.ts).toLocaleDateString('ru-RU'); } catch (e) {}
+      row.appendChild(n); row.appendChild(t); list.appendChild(row);
+    });
+  }
+
+  async function loadRef() {
+    try {
+      const r = await api({ action: 'ref_info' });
+      if (r.ok) { refData = r.data; renderRef(); }
+    } catch (e) {}
+  }
+
+  function refAfterReady() {
+    loadRef();
+    const inv = refEl('refInviteBtn'), cp = refEl('refCopyBtn');
+    if (inv) inv.addEventListener('click', () => {
+      if (!refData || !refData.link) return;
+      const text = 'залетай в Lowkie Clicker! по моей ссылке ты получишь ' + fmtN(refData.coins) + ' монет и +' + fmtN(refData.income) + ' к прибыли в час';
+      const url = 'https://t.me/share/url?url=' + encodeURIComponent(refData.link) + '&text=' + encodeURIComponent(text);
+      try { tg.openTelegramLink(url); } catch (e) { window.open(url, '_blank'); }
+    });
+    if (cp) cp.addEventListener('click', async () => {
+      if (!refData || !refData.link) return;
+      let ok = false;
+      try { await navigator.clipboard.writeText(refData.link); ok = true; } catch (e) {}
+      if (!ok) {
+        try { const i = refEl('refLink'); i.focus(); i.select(); ok = document.execCommand('copy'); } catch (e) {}
+      }
+      if (typeof showAlert === 'function') showAlert(ok ? 'ссылка скопирована' : 'не удалось скопировать — выдели ссылку и скопируй вручную');
+    });
+    const tab = document.getElementById('tab-friends');
+    if (tab) tab.addEventListener('click', loadRef);
+    // приглашённый игрок: после получения бонуса показываем приветствие
+    let welcome = false;
+    try { welcome = sessionStorage.getItem('lowkie_ref_welcome') === '1'; sessionStorage.removeItem('lowkie_ref_welcome'); } catch (e) {}
+    if (welcome && typeof showAlert === 'function') {
+      showAlert('ты пришёл по приглашению друга и получил 100 000 монет и +1000 к прибыли в час. приглашай друзей сам, чтобы получать ещё больше', 'добро пожаловать');
+    }
+  }
 
   // =====================================================================
   // ТИКЕТЫ ПОДДЕРЖКИ: хранятся на сервере (привязаны к Telegram-аккаунту),
