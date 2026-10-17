@@ -73,6 +73,56 @@
     setDirty(true);
   };
 
+  // --- траты игрока: уходят на сервер вместе с сохранением и попадают в «Казну» админки ---
+  const SPEND_KEY = 'lowkie_cloud_spends';
+  let outbox = [];
+  try { const o = JSON.parse(localStorage.getItem(SPEND_KEY)); if (Array.isArray(o)) outbox = o.slice(-200); } catch (e) {}
+  function saveOutbox() {
+    try { if (outbox.length) localStorage.setItem(SPEND_KEY, JSON.stringify(outbox)); else localStorage.removeItem(SPEND_KEY); } catch (e) {}
+  }
+  // "-1 763,5 монет" / "-567 алм." -> { currency, amount }
+  function parseSpend(str) {
+    const s = String(str || '');
+    const currency = /алм/i.test(s) ? 'diamonds' : (/монет/i.test(s) ? 'coins' : null);
+    const m = s.match(/\d[\d\s\u00a0\u202f]*(?:,\d+)?/);
+    if (!currency || !m) return null;
+    const amount = parseFloat(m[0].replace(/[\s\u00a0\u202f]/g, '').replace(',', '.'));
+    return Number.isFinite(amount) && amount > 0 ? { currency, amount } : null;
+  }
+  // у лотереи билет списывается всегда, даже при выигрыше (в истории тогда только «Выигрыш»), поэтому запоминаем билет
+  let lastLotteryTicket = null;
+  if (typeof playLottery === 'function') {
+    const origPlayLottery = playLottery;
+    playLottery = function (ticket) { lastLotteryTicket = ticket; return origPlayLottery.apply(this, arguments); };
+  }
+  function recordSpend(type, title, amountDisplay) {
+    let currency, amount;
+    if (title === 'Лотерея' && lastLotteryTicket) {
+      currency = 'diamonds'; amount = Number(lastLotteryTicket.cost); lastLotteryTicket = null;
+    } else if (type === 'spend') {
+      const p = parseSpend(amountDisplay);
+      if (!p) return;
+      currency = p.currency; amount = p.amount;
+    } else {
+      return;
+    }
+    if (!(amount > 0)) return;
+    const h = state.history && state.history[0];
+    const id = (h && h.title === title && h.id) ? String(h.id) : (Date.now() + '_' + Math.random().toString(36).slice(2, 6));
+    outbox.push({ id, ts: Date.now(), currency, amount, title });
+    if (outbox.length > 200) outbox.splice(0, outbox.length - 200);
+    saveOutbox();
+    setDirty(true);
+  }
+  if (typeof addHistory === 'function') {
+    const origAddHistory = addHistory;
+    addHistory = function (type, title, amountDisplay) {
+      const res = origAddHistory.apply(this, arguments);
+      try { recordSpend(type, title, amountDisplay); } catch (e) {}
+      return res;
+    };
+  }
+
   async function api(payload, keepalive) {
     const res = await fetch(API, {
       method: 'POST',
@@ -111,7 +161,9 @@
         if (best > 0) localStorage.setItem(k, String(best));
       });
       localStorage.removeItem(DIRTY_KEY);
+      localStorage.removeItem(SPEND_KEY); // состояние заменено серверным — покупки, которых в нём нет, не засчитываем
     } catch (e) { console.error('[cloud] adopt failed', e); }
+    outbox = [];
     writeMeta({ uid, rev: record.rev });
     location.reload();
   }
@@ -122,7 +174,8 @@
     dirty = false; // если за время отправки игрок ещё потапает, save() вернёт true
     try {
       const p = buildPayload();
-      const r = await api({ action: 'save', baseRev: meta.rev, state: p.state, extra: p.extra }, keepalive);
+      const spends = outbox.slice(0, 50);
+      const r = await api({ action: 'save', baseRev: meta.rev, state: p.state, extra: p.extra, spends }, keepalive);
       if (r.status === 409 && r.data && r.data.record) {
         const rec = r.data.record;
         if (rec.deviceId === deviceId) {
@@ -137,6 +190,12 @@
       }
       if (!r.ok) throw new Error('save ' + r.status);
       writeMeta({ uid, rev: r.data.rev });
+      if (spends.length) {
+        const sent = new Set(spends.map(x => x.id));
+        outbox = outbox.filter(x => !sent.has(x.id));
+        saveOutbox();
+        if (outbox.length) dirty = true; // остались неотправленные траты — отправим следующим заходом
+      }
       if (!dirty) { try { localStorage.removeItem(DIRTY_KEY); } catch (e) {} }
     } catch (e) {
       setDirty(true); // попробуем в следующий раз

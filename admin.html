@@ -30,6 +30,7 @@
     .mrow .ico { width:48px; height:48px; border-radius:13px; display:flex; align-items:center; justify-content:center; font-size:26px; flex-shrink:0; }
     .mrow[data-tab="home"] .ico { background:linear-gradient(135deg,#4da6ff,#0066cc); }
     .mrow[data-tab="boost"] .ico { background:linear-gradient(135deg,#ffd166,#ff9f43); }
+    .mrow[data-tab="treasury"] .ico { background:linear-gradient(135deg,#2ecc9a,#0f9d78); }
     .mrow .txt { flex:1; min-width:0; }
     .mrow .ttl { display:block; font-weight:800; font-size:16px; }
     .mrow .dsc { display:block; font-size:12px; color:#9aa6b2; line-height:1.3; margin-top:3px; }
@@ -63,6 +64,25 @@
     .pl .bl { text-align:right; font-size:13px; color:#ffd166; font-weight:700; flex-shrink:0; }
     .pl .bl i { display:block; font-style:normal; color:#6fd3ff; font-weight:600; }
 
+    /* казна */
+    .bal { display:flex; flex-direction:column; align-items:center; gap:2px; }
+    .bal .lbl { font-size:13px; color:#9aa6b2; }
+    .bal .big { font-size:30px; font-weight:900; color:#ffd166; line-height:1.2; }
+    .bal .big.dia { color:#6fd3ff; }
+    .bal .sub { font-size:12px; color:#9aa6b2; }
+    .chips { display:flex; gap:6px; justify-content:center; flex-wrap:wrap; margin:6px 0 4px; }
+    .chip { margin:0; padding:7px 12px; border-radius:999px; background:rgba(255,255,255,0.06); color:#d9dee5; font-weight:700; font-size:13px; }
+    .chip.on { background:#ffd166; color:#071226; }
+    .hlist { text-align:left; max-height:none; }
+    .hi { display:flex; align-items:center; gap:10px; padding:10px 8px; border-bottom:1px solid rgba(255,255,255,0.05); }
+    .hi:last-child { border-bottom:none; }
+    .hi .ic { width:38px; height:38px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:18px; background:rgba(255,255,255,0.06); flex-shrink:0; }
+    .hi .tx { flex:1; min-width:0; }
+    .hi .tx b { display:block; font-size:14px; word-break:break-word; }
+    .hi .tx span { display:block; font-size:12px; color:#9aa6b2; word-break:break-word; }
+    .hi .am { text-align:right; font-weight:800; font-size:14px; flex-shrink:0; }
+    .hi .am.in { color:#0ecb81; }
+    .hi .am.out { color:#f6465d; }
     .info { text-align:left; font-size:14px; line-height:1.7; }
     .info b { color:#ffd166; }
 
@@ -108,6 +128,11 @@
         <div class="txt"><span class="ttl">Накрутка</span><span class="dsc">монеты, алмазы и бусты себе и игрокам</span></div>
         <div class="arr">›</div>
       </button>
+      <button class="mrow" data-tab="treasury" onclick="showTab('treasury')">
+        <div class="ico">🏦</div>
+        <div class="txt"><span class="ttl">Казна</span><span class="dsc">монеты и алмазы, которые потратили игроки, и вывод в игру</span></div>
+        <div class="arr">›</div>
+      </button>
     </div>
 
     <!-- ============ ГЛАВНАЯ: только просмотр ============ -->
@@ -127,6 +152,46 @@
       <div id="homeCard" class="box" style="display:none">
         <h3 id="homeTitle">—</h3>
         <div id="homeInfo" class="info"></div>
+      </div>
+    </div>
+
+    <!-- ============ КАЗНА: траты игроков ============ -->
+    <div id="page-treasury" class="page">
+      <div class="box bal">
+        <div class="lbl">🪙 монеты в казне</div>
+        <div class="big" id="trCoins">—</div>
+        <div class="sub" id="trCoinsSub"></div>
+        <input type="number" id="wdCoins" placeholder="сколько вывести" min="1">
+        <div>
+          <button onclick="withdraw('coins', val('wdCoins'))">вывести в игру</button>
+          <button class="ghost" onclick="withdraw('coins', 'all')">вывести всё</button>
+        </div>
+      </div>
+
+      <div class="box bal">
+        <div class="lbl">💎 алмазы в казне</div>
+        <div class="big dia" id="trDia">—</div>
+        <div class="sub" id="trDiaSub"></div>
+        <input type="number" id="wdDia" placeholder="сколько вывести" min="1">
+        <div>
+          <button onclick="withdraw('diamonds', val('wdDia'))">вывести в игру</button>
+          <button class="ghost" onclick="withdraw('diamonds', 'all')">вывести всё</button>
+        </div>
+      </div>
+      <div class="small" id="trNote">выводятся целые числа. деньги зачисляются на твой игровой баланс.</div>
+
+      <div class="box">
+        <h3 style="margin-top:0">история операций</h3>
+        <div class="chips">
+          <button class="chip on" data-f="all" onclick="setFilter('all')">все</button>
+          <button class="chip" data-f="coins" onclick="setFilter('coins')">🪙 монеты</button>
+          <button class="chip" data-f="diamonds" onclick="setFilter('diamonds')">💎 алмазы</button>
+          <button class="chip" data-f="withdraw" onclick="setFilter('withdraw')">📤 выводы</button>
+        </div>
+        <input type="text" class="search" id="searchTr" placeholder="поиск по игроку или покупке" oninput="renderHistory()">
+        <div><button class="ghost" onclick="loadTreasury()">🔄 обновить</button></div>
+        <div id="trList" class="hlist"></div>
+        <div class="small" id="trMore"></div>
       </div>
     </div>
 
@@ -259,7 +324,7 @@
     }
 
     // ---------- навигация: меню -> страница со стрелкой «назад» ----------
-    const TITLES = { home: '🏠 Главная', boost: '💰 Накрутка' };
+    const TITLES = { home: '🏠 Главная', boost: '💰 Накрутка', treasury: '🏦 Казна' };
     function showTab(name) {
       const inMenu = name === 'menu';
       document.getElementById('menu').style.display = inMenu ? 'flex' : 'none';
@@ -268,10 +333,12 @@
       document.getElementById('pageTitle').textContent = TITLES[name] || '';
       document.getElementById('page-home').classList.toggle('active', name === 'home');
       document.getElementById('page-boost').classList.toggle('active', name === 'boost');
+      document.getElementById('page-treasury').classList.toggle('active', name === 'treasury');
       try {
         if (tg && tg.BackButton) { if (inMenu) tg.BackButton.hide(); else tg.BackButton.show(); }
       } catch (e) {}
       if (name === 'home' && players.length) loadPlayers(); // при открытии «Главной» обновляем данные
+      if (name === 'treasury') loadTreasury();               // и «Казны» тоже
       window.scrollTo(0, 0);
     }
     function goBoost() { showTab('boost'); }
@@ -445,6 +512,107 @@
       if (!p) return alert('выбери игрока');
       if (!confirm(`точно сбросить прогресс игрока «${pname(p)}»? Это удалит монеты, алмазы, апгрейды и вернёт игру к начальным значениям.`)) return;
       op('resetState');
+    }
+
+    // ---------- казна ----------
+    let treasury = null;
+    let histFilter = 'all';
+
+    function fmtAmt(n) { // целые без хвоста, дробные с двумя знаками
+      const v = Number(n) || 0;
+      return Number.isInteger(v) ? fmt(v) : v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+    function fmtTime(ts) {
+      try { return new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); }
+      catch (e) { return ''; }
+    }
+
+    async function loadTreasury() {
+      const r = await api({ action: 'admin_treasury' });
+      if (!r.ok) {
+        document.getElementById('trList').innerHTML = '<div class="small" style="padding:12px;text-align:center">не удалось загрузить казну (' + r.status + ')</div>';
+        return;
+      }
+      treasury = r.data;
+      renderTreasury();
+    }
+
+    function renderTreasury() {
+      const t = treasury;
+      if (!t) return;
+      document.getElementById('trCoins').textContent = fmtAmt(t.balance.coins);
+      document.getElementById('trDia').textContent = fmtAmt(t.balance.diamonds);
+      document.getElementById('trCoinsSub').textContent = 'потрачено игроками: ' + fmtAmt(t.spent.coins) + ' · выведено: ' + fmtAmt(t.withdrawn.coins);
+      document.getElementById('trDiaSub').textContent = 'потрачено игроками: ' + fmtAmt(t.spent.diamonds) + ' · выведено: ' + fmtAmt(t.withdrawn.diamonds) + ' · платящих игроков: ' + fmt(t.payers);
+      renderHistory();
+    }
+
+    function setFilter(f) {
+      histFilter = f;
+      document.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.f === f));
+      renderHistory();
+    }
+
+    function renderHistory() {
+      const box = document.getElementById('trList');
+      const more = document.getElementById('trMore');
+      box.innerHTML = '';
+      more.textContent = '';
+      if (!treasury) return;
+      const q = document.getElementById('searchTr').value.trim().toLowerCase().replace(/^@/, '');
+      const list = treasury.history.filter(h => {
+        if (histFilter === 'coins' && !(h.kind === 'spend' && h.currency === 'coins')) return false;
+        if (histFilter === 'diamonds' && !(h.kind === 'spend' && h.currency === 'diamonds')) return false;
+        if (histFilter === 'withdraw' && h.kind !== 'withdraw') return false;
+        return !q || [h.name, h.username, h.title, String(h.uid)].some(x => x && String(x).toLowerCase().includes(q));
+      });
+      if (!list.length) { box.innerHTML = '<div class="small" style="padding:12px;text-align:center">пока пусто</div>'; return; }
+      list.forEach(h => {
+        const isW = h.kind === 'withdraw';
+        const row = document.createElement('div'); row.className = 'hi';
+        const ic = document.createElement('div'); ic.className = 'ic'; ic.textContent = isW ? '📤' : (h.currency === 'diamonds' ? '💎' : '🪙');
+        const tx = document.createElement('div'); tx.className = 'tx';
+        const b = document.createElement('b'); b.textContent = h.title;
+        const sp = document.createElement('span');
+        sp.textContent = (isW ? 'вывод: ' : '') + h.name + (h.username ? ' (@' + h.username + ')' : '') + ' · ' + fmtTime(h.ts);
+        tx.appendChild(b); tx.appendChild(sp);
+        const am = document.createElement('div'); am.className = 'am ' + (isW ? 'out' : 'in');
+        am.textContent = (isW ? '−' : '+') + fmtAmt(h.amount) + (h.currency === 'diamonds' ? ' алм.' : ' мон.');
+        row.appendChild(ic); row.appendChild(tx); row.appendChild(am);
+        box.appendChild(row);
+      });
+      if (treasury.history.length >= 300) more.textContent = 'показаны последние 300 операций';
+    }
+
+    async function withdraw(currency, amount) {
+      const name = currency === 'diamonds' ? 'алмазов' : 'монет';
+      if (amount !== 'all') {
+        const n = Math.floor(Number(amount));
+        if (!n || n < 1) return alert('введи, сколько вывести (целое число больше нуля)');
+        amount = n;
+      }
+      const have = treasury ? Math.floor(treasury.balance[currency]) : 0;
+      const will = amount === 'all' ? have : amount;
+      if (will < 1) return alert('в казне пока нечего выводить');
+      if (!confirm(`вывести ${fmt(will)} ${name} на твой игровой баланс?`)) return;
+      const r = await api({ action: 'admin_withdraw', currency, amount });
+      if (!r.ok) {
+        const e = r.data && r.data.error;
+        const msg = {
+          empty: 'в казне пока нечего выводить',
+          bad_value: 'некорректное число',
+          not_enough: 'в казне только ' + fmt(r.data && r.data.available) + ' ' + name,
+          no_player: 'у тебя ещё нет игрового аккаунта: открой игру в этом боте хотя бы раз и повтори',
+          withdraw_failed: 'не получилось, ничего не списано. попробуй ещё раз'
+        }[e] || ('ошибка: ' + (e || r.status));
+        alert(msg);
+        loadTreasury();
+        return;
+      }
+      document.getElementById(currency === 'diamonds' ? 'wdDia' : 'wdCoins').value = '';
+      alert(`готово: ${fmt(r.data.amount)} ${name} зачислено на твой игровой баланс. в игре они появятся при следующем открытии (или в течение минуты)`);
+      await loadTreasury();
+      loadPlayers(); // баланс админа в списке игроков изменился
     }
 
     (async function start() {
