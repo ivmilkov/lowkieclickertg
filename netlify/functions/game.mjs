@@ -140,10 +140,28 @@ function summary(rec) {
   };
 }
 
+// Аватарка из Telegram: принимаем только ссылки вида https://t.me/i/userpic/...
+function safePhoto(url) {
+  if (typeof url !== 'string' || url.length > 300) return null;
+  return /^https:\/\/t\.me\/i\/userpic\/[\w\-\/\.]+$/.test(url) ? url : null;
+}
+
 // Обновить общий список топ-игроков
-async function updateTop(lb, id, name, total) {
+async function updateTop(lb, id, name, total, photo) {
   const top = (await lb.get('top', { type: 'json' })) || { entries: {} };
   const entries = top.entries || {};
+
+  // 0 монет (например, сбросил прогресс) — убираем игрока из таблицы
+  if (!(total > 0)) {
+    if (entries[id]) {
+      delete entries[id];
+      top.entries = entries;
+      top.updatedAt = Date.now();
+      await lb.setJSON('top', top);
+    }
+    return;
+  }
+
   const ids = Object.keys(entries);
 
   // не попадаем в топ и не было в нём — ничего не пишем
@@ -152,7 +170,7 @@ async function updateTop(lb, id, name, total) {
     if (total <= min) return;
   }
 
-  entries[id] = { n: name, t: total };
+  entries[id] = { n: name, t: total, p: photo || null };
   const sorted = Object.entries(entries).sort((a, b) => b[1].t - a[1].t).slice(0, TOP_SIZE);
   top.entries = Object.fromEntries(sorted);
   top.updatedAt = Date.now();
@@ -219,7 +237,7 @@ export default async (req) => {
       rec.updatedAt = Date.now();
       await store.setJSON(tkey, rec);
       try {
-        await updateTop(lb, tid, rec.name || rec.firstName || 'Игрок', Math.floor(Number(rec.state.total) || 0));
+        await updateTop(lb, tid, rec.name || rec.firstName || 'Игрок', Math.floor(Number(rec.state.total) || 0), safePhoto(rec.photoUrl));
       } catch (e) {
         console.error('leaderboard update failed', e);
       }
@@ -242,9 +260,9 @@ export default async (req) => {
     // игрок уже есть на сервере, но ещё не в таблице (например, не сохранялся после обновления) — добавим его
     if (current && current.state && !(top.entries && top.entries[String(user.id)])) {
       const t = Math.floor(Number(current.state.total));
-      if (Number.isFinite(t) && t >= 0) {
+      if (Number.isFinite(t) && t > 0) {
         try {
-          await updateTop(lb, String(user.id), displayName(user), t);
+          await updateTop(lb, String(user.id), displayName(user), t, safePhoto(user.photo_url));
           top = (await lb.get('top', { type: 'json' })) || { entries: {} };
         } catch (e) {
           console.error('leaderboard self-heal failed', e);
@@ -253,12 +271,14 @@ export default async (req) => {
     }
 
     const list = Object.entries(top.entries || {})
+      .filter(([, e]) => e.t > 0)
       .sort((a, b) => b[1].t - a[1].t)
       .slice(0, TOP_SIZE)
       .map(([id, e], i) => ({
         rank: i + 1,
         name: e.n,
         total: e.t,
+        photo: safePhoto(e.p),
         isMe: id === String(user.id)
       }));
     return json({ top: list, updatedAt: top.updatedAt || 0 });
@@ -287,7 +307,8 @@ export default async (req) => {
 
     const now = Date.now();
     const name = displayName(user);
-    const lbDue = !current || now - (current.lbAt || 0) > LB_UPDATE_EVERY;
+    // обнуление (сброс прогресса) отражаем в таблице сразу, не дожидаясь паузы
+    const lbDue = !current || now - (current.lbAt || 0) > LB_UPDATE_EVERY || !(Number(st.total) > 0);
 
     const record = {
       rev: curRev + 1,
@@ -297,6 +318,7 @@ export default async (req) => {
       tgId: user.id,
       username: user.username || null,
       name,
+      photoUrl: safePhoto(user.photo_url),
       lbAt: lbDue ? now : (current.lbAt || 0),
       updatedAt: now
     };
@@ -304,7 +326,7 @@ export default async (req) => {
 
     if (lbDue) {
       try {
-        await updateTop(lb, String(user.id), name, Math.floor(Number(st.total)));
+        await updateTop(lb, String(user.id), name, Math.floor(Number(st.total)), safePhoto(user.photo_url));
       } catch (e) {
         console.error('leaderboard update failed', e);
       }
