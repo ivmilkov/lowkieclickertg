@@ -146,6 +146,76 @@ function safePhoto(url) {
   return /^https:\/\/t\.me\/i\/userpic\/[\w\-\/\.]+$/.test(url) ? url : null;
 }
 
+// ---------- казна: траты игроков ----------
+const MAX_SPEND_LOG = 200;      // сколько последних трат хранить у каждого игрока
+const round2 = n => Math.round(Number(n) * 100) / 100;
+
+// принять траты, присланные игрой вместе с сохранением (повторная отправка безопасна: дубли по id отбрасываются)
+function applySpends(rec, spends) {
+  if (!Array.isArray(spends) || !spends.length) return;
+  rec.spent = { coins: Number(rec.spent && rec.spent.coins) || 0, diamonds: Number(rec.spent && rec.spent.diamonds) || 0 };
+  rec.spendLog = Array.isArray(rec.spendLog) ? rec.spendLog : [];
+  const seen = new Set(rec.spendLog.map(e => e.id));
+  for (const sp of spends.slice(0, 50)) {
+    if (!sp || typeof sp !== 'object') continue;
+    const id = String(sp.id || '').slice(0, 40);
+    if (!id || seen.has(id)) continue;
+    const currency = sp.currency === 'diamonds' ? 'diamonds' : sp.currency === 'coins' ? 'coins' : null;
+    const amount = round2(sp.amount);
+    if (!currency || !(amount > 0) || amount > 1e12) continue;
+    const title = String(sp.title || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 80) || 'Покупка';
+    let ts = Number(sp.ts);
+    if (!Number.isFinite(ts) || ts <= 0 || ts > Date.now() + 60_000) ts = Date.now();
+    rec.spent[currency] = round2(rec.spent[currency] + amount);
+    rec.spendLog.unshift({ id, ts, currency, amount, title });
+    seen.add(id);
+  }
+  if (rec.spendLog.length > MAX_SPEND_LOG) rec.spendLog.length = MAX_SPEND_LOG;
+}
+
+// запись игрока без служебного журнала трат (его игре отдавать не нужно)
+function publicRecord(rec) {
+  if (!rec) return rec;
+  const { spendLog, spent, ...rest } = rec;
+  return rest;
+}
+
+async function loadAllRecords(store) {
+  const { blobs } = await store.list({ prefix: 'u_' });
+  const out = [];
+  for (let i = 0; i < blobs.length; i += 20) {
+    const chunk = blobs.slice(i, i + 20);
+    const recs = await Promise.all(chunk.map(b => store.get(b.key, { type: 'json' }).catch(() => null)));
+    recs.forEach(r => { if (r && r.state) out.push(r); });
+  }
+  return out;
+}
+
+// сводка по казне: сколько игроки потратили, сколько уже выведено, что осталось
+async function treasurySnapshot(store, tre) {
+  const recs = await loadAllRecords(store);
+  const spent = { coins: 0, diamonds: 0 };
+  const history = [];
+  let payers = 0;
+  recs.forEach(r => {
+    if (r.spent && (r.spent.coins > 0 || r.spent.diamonds > 0)) payers++;
+    spent.coins += Number(r.spent && r.spent.coins) || 0;
+    spent.diamonds += Number(r.spent && r.spent.diamonds) || 0;
+    (r.spendLog || []).forEach(e => history.push({
+      kind: 'spend', id: e.id, ts: e.ts, currency: e.currency, amount: e.amount, title: e.title,
+      uid: String(r.tgId), name: r.name || r.firstName || r.username || 'Игрок', username: r.username || null
+    }));
+  });
+  const meta = (await tre.get('meta', { type: 'json' })) || {};
+  const withdrawn = { coins: Number(meta.withdrawn && meta.withdrawn.coins) || 0, diamonds: Number(meta.withdrawn && meta.withdrawn.diamonds) || 0 };
+  const log = Array.isArray(meta.log) ? meta.log : [];
+  return {
+    meta, withdrawn, log, payers, spent: { coins: round2(spent.coins), diamonds: round2(spent.diamonds) },
+    balance: { coins: round2(spent.coins - withdrawn.coins), diamonds: round2(spent.diamonds - withdrawn.diamonds) },
+    history
+  };
+}
+
 // Обновить общий список топ-игроков
 async function updateTop(lb, id, name, total, photo) {
   const top = (await lb.get('top', { type: 'json' })) || { entries: {} };
@@ -203,20 +273,69 @@ export default async (req) => {
   // strong: читаем всегда свежую запись, а не устаревшую копию
   const store = getStore({ name: 'players', consistency: 'strong' });
   const lb = getStore({ name: 'leaderboard', consistency: 'strong' });
+  const tre = getStore({ name: 'treasury', consistency: 'strong' });
   // ---------- админские запросы (только для ADMIN_IDS) ----------
   if (typeof body.action === 'string' && body.action.startsWith('admin_')) {
     if (!ADMIN_IDS.includes(String(user.id))) return json({ error: 'forbidden' }, 403);
 
     if (body.action === 'admin_list') {
-      const { blobs } = await store.list({ prefix: 'u_' });
-      const rows = [];
-      for (let i = 0; i < blobs.length; i += 20) {
-        const chunk = blobs.slice(i, i + 20);
-        const recs = await Promise.all(chunk.map(b => store.get(b.key, { type: 'json' }).catch(() => null)));
-        recs.forEach(r => { if (r && r.state) rows.push(summary(r)); });
-      }
+      const rows = (await loadAllRecords(store)).map(summary);
       rows.sort((a, b) => b.total - a.total);
       return json({ players: rows });
+    }
+
+    // ----- казна -----
+    if (body.action === 'admin_treasury') {
+      const t = await treasurySnapshot(store, tre);
+      const items = t.history.concat(t.log.map((w, i) => ({
+        kind: 'withdraw', id: 'w' + w.ts + '_' + i, ts: w.ts, currency: w.currency, amount: w.amount,
+        title: 'Вывод на баланс игры', name: w.byName || 'Админ', uid: w.by
+      })));
+      items.sort((a, b) => b.ts - a.ts);
+      return json({
+        balance: t.balance, spent: t.spent, withdrawn: t.withdrawn, payers: t.payers,
+        history: items.slice(0, 300)
+      });
+    }
+
+    if (body.action === 'admin_withdraw') {
+      const currency = body.currency === 'diamonds' ? 'diamonds' : body.currency === 'coins' ? 'coins' : null;
+      if (!currency) return json({ error: 'bad_currency' }, 400);
+      const t = await treasurySnapshot(store, tre);
+      const available = Math.floor(t.balance[currency]);
+      const amount = body.amount === 'all' ? available : Math.floor(Number(body.amount));
+      if (!Number.isFinite(amount) || amount < 1) return json({ error: available < 1 ? 'empty' : 'bad_value' }, 400);
+      if (amount > available) return json({ error: 'not_enough', available }, 400);
+
+      // зачисляем на игровой баланс самого админа
+      const mykey = `u_${user.id}`;
+      const mine = await store.get(mykey, { type: 'json' });
+      if (!mine || !mine.state) return json({ error: 'no_player' }, 404);
+
+      // сначала списываем из казны (если дальше сбой — откатим), потом зачисляем игроку
+      const newMeta = {
+        withdrawn: { coins: t.withdrawn.coins, diamonds: t.withdrawn.diamonds },
+        log: [{ ts: Date.now(), by: String(user.id), byName: displayName(user), currency, amount }].concat(t.log).slice(0, 100)
+      };
+      newMeta.withdrawn[currency] = round2(newMeta.withdrawn[currency] + amount);
+      await tre.setJSON('meta', newMeta);
+      try {
+        const err = applyAdminAction(mine.state, currency === 'coins' ? 'addCoins' : 'addDiamonds', amount);
+        if (err) throw new Error(err);
+        mine.rev = (mine.rev || 0) + 1;
+        mine.deviceId = 'admin';
+        mine.updatedAt = Date.now();
+        await store.setJSON(mykey, mine);
+      } catch (e) {
+        await tre.setJSON('meta', t.meta).catch(() => {}); // откат списания
+        console.error('withdraw failed', e);
+        return json({ error: 'withdraw_failed' }, 500);
+      }
+      try {
+        await updateTop(lb, String(user.id), mine.name || displayName(user), Math.floor(Number(mine.state.total) || 0), safePhoto(mine.photoUrl));
+      } catch (e) { console.error('leaderboard update failed', e); }
+      const left = { coins: round2(t.balance.coins - (currency === 'coins' ? amount : 0)), diamonds: round2(t.balance.diamonds - (currency === 'diamonds' ? amount : 0)) };
+      return json({ ok: true, amount, currency, balance: left });
     }
 
     const tid = String(body.targetId || '').replace(/\D/g, '');
@@ -251,7 +370,7 @@ export default async (req) => {
   const current = await store.get(key, { type: 'json' });
 
   if (body.action === 'load') {
-    return json({ exists: !!current, record: current || null });
+    return json({ exists: !!current, record: publicRecord(current) || null });
   }
 
   if (body.action === 'top') {
@@ -294,7 +413,7 @@ export default async (req) => {
 
     // другое устройство уже записало более новую версию
     if (current && baseRev !== curRev) {
-      return json({ error: 'conflict', record: current }, 409);
+      return json({ error: 'conflict', record: publicRecord(current) }, 409);
     }
 
     const extra = {};
@@ -320,8 +439,13 @@ export default async (req) => {
       name,
       photoUrl: safePhoto(user.photo_url),
       lbAt: lbDue ? now : (current.lbAt || 0),
-      updatedAt: now
+      updatedAt: now,
+      spent: current && current.spent,
+      spendLog: current && current.spendLog
     };
+    if (!record.spent) delete record.spent;
+    if (!record.spendLog) delete record.spendLog;
+    applySpends(record, body.spends);
     await store.setJSON(key, record);
 
     if (lbDue) {
