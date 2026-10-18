@@ -126,6 +126,55 @@
     };
   }
 
+  // --- бан: вместо игры показываем окно с причиной и сроком; прогресс не удаляется ---
+  let banned = false, banBox = null, banTimer = null;
+  function banLeft(until) {
+    const ms = until - Date.now();
+    if (ms <= 0) return '';
+    const d = Math.floor(ms / 86400000), h = Math.floor(ms % 86400000 / 3600000), m = Math.floor(ms % 3600000 / 60000);
+    const pl = (n, a) => n + ' ' + (n % 10 === 1 && n % 100 !== 11 ? a[0] : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? a[1] : a[2]));
+    return d > 0 ? pl(d, ['день', 'дня', 'дней']) + (h ? ' ' + pl(h, ['час', 'часа', 'часов']) : '') : (h > 0 ? pl(h, ['час', 'часа', 'часов']) + ' ' : '') + pl(m || 1, ['минута', 'минуты', 'минут']);
+  }
+  function showBan(ban) {
+    ban = ban || {};
+    ready = false;
+    try { overlay.remove(); } catch (e) {}
+    if (!banBox) {
+      banBox = document.createElement('div');
+      banBox.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:#071226;color:#fff;display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;font-family:system-ui,sans-serif;text-align:center;overflow:auto';
+      document.body.appendChild(banBox);
+    }
+    banBox.innerHTML = '';
+    const card = document.createElement('div');
+    card.style.cssText = 'max-width:360px;width:100%;padding:28px 22px;border-radius:18px;background:rgba(246,70,93,0.08);border:1px solid rgba(246,70,93,0.4)';
+    const mk = (tag, css, text) => { const e = document.createElement(tag); e.style.cssText = css; e.textContent = text; card.appendChild(e); return e; };
+    mk('div', 'font-size:54px;line-height:1;margin-bottom:10px', '🚫');
+    mk('div', 'font-size:22px;font-weight:800;margin-bottom:16px', 'ты заблокирован');
+    mk('div', 'font-size:12px;color:#9aa6b2;text-transform:uppercase;letter-spacing:.5px', 'причина');
+    mk('div', 'font-size:17px;font-weight:700;margin:4px 0 16px;word-break:break-word', ban.reason || 'нарушение правил');
+    mk('div', 'font-size:12px;color:#9aa6b2;text-transform:uppercase;letter-spacing:.5px', 'срок');
+    const term = mk('div', 'font-size:17px;font-weight:700;margin:4px 0 16px', '');
+    const upd = () => {
+      if (!ban.until) { term.textContent = 'навсегда'; return; }
+      const left = banLeft(ban.until);
+      term.textContent = 'до ' + new Date(ban.until).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) + (left ? ' (осталось ' + left + ')' : '');
+    };
+    upd();
+    mk('div', 'font-size:13px;color:#9aa6b2;line-height:1.4', 'твой прогресс сохранён и никуда не пропал. если считаешь, что это ошибка — обратись к администрации игры.');
+    banBox.appendChild(card);
+    if (!banned) {
+      banned = true;
+      // раз в 30 секунд проверяем: вдруг бан уже снят или закончился
+      banTimer = setInterval(async () => {
+        upd();
+        try {
+          const r = await fetch(API, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ initData, deviceId, action: 'load' }) });
+          if (r.ok) location.reload();
+        } catch (e) {}
+      }, 30000);
+    }
+  }
+
   async function api(payload, keepalive) {
     const res = await fetch(API, {
       method: 'POST',
@@ -135,6 +184,7 @@
     });
     let data = null;
     try { data = await res.json(); } catch (e) {}
+    if (res.status === 403 && data && data.error === 'banned') showBan(data.ban);
     return { status: res.status, ok: res.ok, data };
   }
 
@@ -763,6 +813,7 @@
   }
 
   init().then(hideOverlay).catch(e => {
+    if (banned) return;
     console.warn('[cloud] нет связи, играем локально', e);
     overlay.textContent = 'нет связи с сервером, играем офлайн';
     setTimeout(hideOverlay, 1500);

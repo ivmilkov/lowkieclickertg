@@ -93,6 +93,9 @@
     .tkrow .t1 b { font-size:15px; word-break:break-word; }
     .tkrow .t2 { font-size:12px; color:#9aa6b2; margin-top:3px; word-break:break-word; }
     .tkrow .t3 { font-size:13px; color:#d9dee5; margin-top:6px; word-break:break-word; opacity:.85; }
+    .bchip { margin:0; padding:7px 12px; border-radius:999px; background:rgba(255,255,255,0.06); color:#d9dee5; font-weight:700; font-size:13px; }
+    .bchip.on { background:#f6465d; color:#fff; }
+    .bantag { display:inline-block; margin-left:6px; padding:1px 7px; border-radius:6px; background:rgba(246,70,93,0.18); color:#f6465d; border:1px solid rgba(246,70,93,0.4); font-size:10px; font-weight:800; text-transform:uppercase; vertical-align:middle; }
     .st { flex-shrink:0; font-size:10px; font-weight:800; padding:4px 8px; border-radius:6px; text-transform:uppercase; letter-spacing:.4px; }
     .st.open { background:rgba(255,166,0,0.15); color:#ffa600; border:1px solid rgba(255,166,0,0.3); }
     .st.answered { background:rgba(14,203,129,0.15); color:#0ecb81; border:1px solid rgba(14,203,129,0.3); }
@@ -348,6 +351,32 @@
           <div class="small" style="margin-top:12px">«как новичка» дополнительно обнуляет друзей и бонус рефералки и снова разрешает получить награду по реферальной ссылке (нужно для теста). Игру этого игрока перед этим лучше закрыть.</div>
           <button class="danger" onclick="resetAsNew()">сбросить как нового игрока</button>
         </div>
+
+        <div class="row" id="banRow">
+          <h3>бан</h3>
+          <div class="small" id="banState">игрок не забанен. Прогресс при бане не стирается, игрок просто не может играть и не показывается в лидерах.</div>
+          <button class="danger" id="banOpenBtn" onclick="toggleBanForm()">забанить игрока</button>
+          <button id="unbanBtn" onclick="unbanPlayer()" style="display:none">разбанить</button>
+          <div id="banForm" style="display:none">
+            <div class="small" style="margin-top:10px">на какой срок</div>
+            <div class="chips" id="banDur">
+              <button class="bchip on" data-d="forever" onclick="pickBan('d','forever')">навсегда</button>
+              <button class="bchip" data-d="30" onclick="pickBan('d','30')">месяц</button>
+              <button class="bchip" data-d="7" onclick="pickBan('d','7')">неделя</button>
+              <button class="bchip" data-d="custom" onclick="pickBan('d','custom')">своё число дней</button>
+            </div>
+            <input type="number" id="banDays" min="1" max="3650" placeholder="сколько дней" style="display:none"><br>
+            <div class="small" style="margin-top:6px">причина</div>
+            <div class="chips" id="banReasons">
+              <button class="bchip on" data-r="Читерство" onclick="pickBan('r','Читерство')">Читерство</button>
+              <button class="bchip" data-r="Автокликер" onclick="pickBan('r','Автокликер')">Автокликер</button>
+              <button class="bchip" data-r="Багоюз" onclick="pickBan('r','Багоюз')">Багоюз</button>
+              <button class="bchip" data-r="custom" onclick="pickBan('r','custom')">другая причина</button>
+            </div>
+            <input type="text" id="banReasonText" maxlength="120" placeholder="напиши причину" style="display:none"><br>
+            <button class="danger" onclick="banPlayer()">подтвердить бан</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -479,6 +508,7 @@
         const rk = document.createElement('div'); rk.className = 'rk'; rk.textContent = String(i + 1);
         const nm = document.createElement('div'); nm.className = 'nm';
         const b = document.createElement('b'); b.textContent = pname(p) + (String(p.id) === MY_ID ? ' (вы)' : '');
+        if (p.ban) { const t = document.createElement('span'); t.className = 'bantag'; t.textContent = 'бан'; b.appendChild(t); }
         const sp = document.createElement('span');
         sp.textContent = (p.username ? '@' + p.username : 'без username') + ' · ' + p.id;
         nm.appendChild(b); nm.appendChild(sp);
@@ -513,6 +543,7 @@
       };
       const st = details[String(p.id)] || null;
       add('Telegram id', String(p.id));
+      if (p.ban) add('🚫 бан', p.ban.reason + ' · ' + (p.ban.until ? 'до ' + banWhen(p.ban.until) : 'навсегда'));
       add('username', p.username ? '@' + p.username : '—');
       add('ник в игре', p.nickname || '—');
       add('монеты', fmt(p.total));
@@ -549,6 +580,7 @@
       document.getElementById('pickSub').textContent = (p.username ? '@' + p.username : 'без username') + ' · ' + p.id;
       ed.style.display = 'block';
       fillInfo(document.getElementById('boostInfo'), p);
+      renderBan();
       const st = details[String(p.id)];
       if (st) document.getElementById('holdToTapToggle').checked = !!st.holdToTap;
     }
@@ -593,6 +625,64 @@
       if (!p) return alert('выбери игрока');
       if (!confirm(`точно сбросить прогресс игрока «${pname(p)}»? Это удалит монеты, алмазы, апгрейды и вернёт игру к начальным значениям.`)) return;
       op('resetState');
+    }
+
+    // ---------- бан ----------
+    let banDur = 'forever', banReason = 'Читерство';
+    function toggleBanForm() {
+      const f = document.getElementById('banForm');
+      f.style.display = f.style.display === 'none' ? 'block' : 'none';
+    }
+    function pickBan(kind, v) {
+      if (kind === 'd') banDur = v; else banReason = v;
+      const box = document.getElementById(kind === 'd' ? 'banDur' : 'banReasons');
+      box.querySelectorAll('.bchip').forEach(c => c.classList.toggle('on', c.dataset[kind] === v));
+      document.getElementById('banDays').style.display = banDur === 'custom' ? 'inline-block' : 'none';
+      document.getElementById('banReasonText').style.display = banReason === 'custom' ? 'inline-block' : 'none';
+    }
+    function banWhen(ts) { return new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+    function renderBan() {
+      const p = sel();
+      if (!p) return;
+      const b = p.ban;
+      document.getElementById('banState').textContent = b
+        ? '🚫 игрок забанен · причина: ' + b.reason + ' · срок: ' + (b.until ? 'до ' + banWhen(b.until) : 'навсегда')
+        : 'игрок не забанен. Прогресс при бане не стирается, игрок просто не может играть и не показывается в лидерах.';
+      document.getElementById('unbanBtn').style.display = b ? 'inline-block' : 'none';
+      document.getElementById('banOpenBtn').textContent = b ? 'изменить бан' : 'забанить игрока';
+      if (!b) document.getElementById('banForm').style.display = 'none';
+    }
+    async function banPlayer() {
+      const p = sel();
+      if (!p) return alert('выбери игрока');
+      let days = banDur;
+      if (banDur === 'custom') {
+        days = Math.floor(Number(document.getElementById('banDays').value));
+        if (!(days >= 1) || days > 3650) return alert('введи число дней от 1 до 3650');
+      } else if (banDur !== 'forever') days = Number(banDur);
+      const reason = banReason === 'custom' ? document.getElementById('banReasonText').value.trim() : banReason;
+      if (!reason) return alert('напиши причину бана');
+      const term = days === 'forever' ? 'навсегда' : 'на ' + days + ' дн.';
+      if (!confirm(`забанить «${pname(p)}» ${term}? Причина: ${reason}`)) return;
+      const r = await api({ action: 'admin_update', targetId: String(p.id), act: 'ban', value: { days, reason } });
+      if (!r.ok) return alert(r.data && r.data.error === 'cant_ban_admin' ? 'админа банить нельзя' : 'не получилось забанить (' + ((r.data && r.data.error) || r.status) + ')');
+      applyBanResult(p, r);
+      alert('игрок забанен');
+    }
+    async function unbanPlayer() {
+      const p = sel();
+      if (!p) return alert('выбери игрока');
+      if (!confirm(`разбанить «${pname(p)}»?`)) return;
+      const r = await api({ action: 'admin_update', targetId: String(p.id), act: 'unban' });
+      if (!r.ok) return alert('не получилось разбанить');
+      applyBanResult(p, r);
+      alert('игрок разбанен');
+    }
+    function applyBanResult(p, r) {
+      const i = players.findIndex(x => String(x.id) === String(p.id));
+      if (i >= 0) players[i] = r.data.summary;
+      details[String(p.id)] = r.data.state;
+      renderAll();
     }
 
     function resetAsNew() {
