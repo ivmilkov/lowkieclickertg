@@ -149,7 +149,8 @@ function summary(rec) {
     updatedAt: rec.updatedAt || 0,
     rev: rec.rev,
     ban: activeBan(rec),
-    isAdmin: ADMIN_IDS.includes(String(rec.tgId))
+    isAdmin: ADMIN_IDS.includes(String(rec.tgId)),
+    photo: safePhoto(rec.photoUrl)
   };
 }
 
