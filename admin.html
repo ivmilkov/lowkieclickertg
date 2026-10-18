@@ -356,7 +356,7 @@
 
         <div class="row" id="banRow">
           <h3>бан</h3>
-          <div class="small" id="banState">игрок не забанен. Прогресс при бане не стирается, игрок просто не может играть и не показывается в лидерах.</div>
+          <div class="small" id="banState">игрок не забанен</div>
           <button class="danger" id="banOpenBtn" onclick="toggleBanForm()">забанить игрока</button>
           <button id="unbanBtn" onclick="unbanPlayer()" style="display:none">разбанить</button>
           <div id="banForm" style="display:none">
@@ -674,7 +674,7 @@
       const b = p.ban;
       document.getElementById('banState').textContent = b
         ? '🚫 игрок забанен · причина: ' + b.reason + ' · срок: ' + (b.until ? 'до ' + banWhen(b.until) : 'навсегда')
-        : 'игрок не забанен. Прогресс при бане не стирается, игрок просто не может играть и не показывается в лидерах.';
+        : 'игрок не забанен';
       document.getElementById('unbanBtn').style.display = b ? 'inline-block' : 'none';
       document.getElementById('banOpenBtn').textContent = b ? 'изменить бан' : 'забанить игрока';
       if (!b) document.getElementById('banForm').style.display = 'none';
@@ -715,7 +715,7 @@
     function resetAsNew() {
       const p = sel();
       if (!p) return alert('выбери игрока');
-      if (!confirm(`сбросить игрока «${pname(p)}» как совсем нового? Весь прогресс и бонусы друзей обнулятся, а по реферальной ссылке он снова сможет получить награду. Игроку, который его приглашал, этот друг вычтется из счётчика.`)) return;
+      if (!confirm(`сбросить игрока «${pname(p)}» как совсем нового? весь прогресс и бонусы друзей обнулятся, а по реферальной ссылке он снова сможет получить награду. игроку, который его приглашал, этот друг вычтется из счётчика`)) return;
       op('resetAsNew');
     }
 
