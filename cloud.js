@@ -221,6 +221,17 @@
     location.reload();
   }
 
+  // Сервер уже начислил реферальный бонус (ответ мог потеряться, например, при обновлении страницы),
+  // а в игре на устройстве его ещё нет — такую запись обязательно берём себе, иначе бонус затрётся нулём
+  function missedRefBonus(rec) {
+    const sr = rec && rec.state && rec.state.refs;
+    return !!(sr && sr.by && !(state.refs && state.refs.by));
+  }
+  function adoptRefBonus(rec) {
+    try { sessionStorage.setItem('lowkie_ref_welcome', '1'); } catch (e) {}
+    adopt(rec);
+  }
+
   async function push(keepalive) {
     if (!ready || inflight || adopting || !dirty) return;
     inflight = true;
@@ -231,6 +242,7 @@
       const r = await api({ action: 'save', baseRev: meta.rev, state: p.state, extra: p.extra, spends }, keepalive);
       if (r.status === 409 && r.data && r.data.record) {
         const rec = r.data.record;
+        if (missedRefBonus(rec)) { adoptRefBonus(rec); return; }
         if (rec.deviceId === deviceId) {
           // запись сделали мы сами (ответ потерялся / сервер отдал не самую свежую копию) —
           // свой прогресс не трогаем, просто сверяем номер версии и отправим снова
@@ -277,7 +289,9 @@
       const rec = r.data.record;
       if (meta.uid === uid) {
         if (meta.rev < rec.rev) {
-          if (rec.deviceId === deviceId) {
+          if (missedRefBonus(rec)) {
+            adoptRefBonus(rec); return;       // сервер начислил реферальный бонус, а ответ до нас не дошёл
+          } else if (rec.deviceId === deviceId) {
             writeMeta({ uid, rev: rec.rev }); // это наша же запись, прогресс на устройстве актуален
           } else {
             adopt(rec); return;               // с другого устройства ушли вперёд
@@ -430,7 +444,7 @@
       const r = await api({ action: 'load' });
       if (r.ok && r.data.exists && !dirty && !inflight) {
         const rec = r.data.record;
-        if (rec.rev > meta.rev && rec.deviceId !== deviceId) adopt(rec);
+        if (rec.rev > meta.rev && (rec.deviceId !== deviceId || missedRefBonus(rec))) adopt(rec);
       }
     } catch (e) {}
   });
@@ -443,7 +457,7 @@
       const r = await api({ action: 'load' });
       if (r.ok && r.data.exists && !dirty && !inflight) {
         const rec = r.data.record;
-        if (rec.rev > meta.rev && rec.deviceId !== deviceId) adopt(rec);
+        if (rec.rev > meta.rev && (rec.deviceId !== deviceId || missedRefBonus(rec))) adopt(rec);
       }
     } catch (e) {}
   }, 45000);
