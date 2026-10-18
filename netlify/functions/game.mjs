@@ -148,7 +148,8 @@ function summary(rec) {
     diamonds: Math.floor(Number(st.diamonds && st.diamonds.total) || 0),
     updatedAt: rec.updatedAt || 0,
     rev: rec.rev,
-    ban: activeBan(rec)
+    ban: activeBan(rec),
+    isAdmin: ADMIN_IDS.includes(String(rec.tgId))
   };
 }
 
