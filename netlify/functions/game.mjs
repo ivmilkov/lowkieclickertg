@@ -128,6 +128,15 @@ function applyAdminAction(st, act, value) {
 }
 
 // краткая сводка по игроку для списка
+// активный бан игрока (until = 0 — навсегда); истёкший бан считается снятым
+function activeBan(rec) {
+  const b = rec && rec.ban;
+  if (!b || typeof b !== 'object') return null;
+  const until = Number(b.until) || 0;
+  if (until && until <= Date.now()) return null;
+  return { reason: String(b.reason || ''), until, at: Number(b.at) || 0 };
+}
+
 function summary(rec) {
   const st = rec.state || {};
   return {
@@ -138,7 +147,8 @@ function summary(rec) {
     total: Math.floor(Number(st.total) || 0),
     diamonds: Math.floor(Number(st.diamonds && st.diamonds.total) || 0),
     updatedAt: rec.updatedAt || 0,
-    rev: rec.rev
+    rev: rec.rev,
+    ban: activeBan(rec)
   };
 }
 
@@ -526,6 +536,29 @@ export default async (req) => {
       return json({ summary: summary(rec), state: rec.state });
     }
 
+    if (body.action === 'admin_update' && (body.act === 'ban' || body.act === 'unban')) {
+      const now = Date.now();
+      if (body.act === 'ban') {
+        if (ADMIN_IDS.includes(tid)) return json({ error: 'cant_ban_admin' }, 400);
+        const v = body.value && typeof body.value === 'object' ? body.value : {};
+        const reason = String(v.reason || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+        if (!reason) return json({ error: 'bad_reason' }, 400);
+        let until = 0;
+        if (v.days !== 'forever') {
+          const d = Math.floor(Number(v.days));
+          if (!(d >= 1) || d > 3650) return json({ error: 'bad_value' }, 400);
+          until = now + d * 86400000;
+        }
+        rec.ban = { until, reason, at: now, by: String(user.id) };
+        try { await updateTop(lb, tid, rec.name || 'Игрок', 0, null); } catch (e) { console.error('leaderboard update failed', e); }
+      } else {
+        delete rec.ban;
+        try { await updateTop(lb, tid, rec.name || 'Игрок', Math.floor(Number(rec.state.total) || 0), safePhoto(rec.photoUrl)); } catch (e) {}
+      }
+      await store.setJSON(tkey, rec);
+      return json({ ok: true, summary: summary(rec), state: rec.state });
+    }
+
     if (body.action === 'admin_update' && body.act === 'resetAsNew') {
       // полный сброс «как нового игрока»: прогресс и друзья обнуляются, а по реферальной ссылке снова можно получить награду (для тестов)
       const now = Date.now();
@@ -688,6 +721,12 @@ export default async (req) => {
   const key = `u_${user.id}`;
   const current = await store.get(key, { type: 'json' });
 
+  // забаненный игрок не может ни играть, ни сохраняться: игра показывает ему окно бана (прогресс не трогаем)
+  {
+    const ban = activeBan(current);
+    if (ban && ['load', 'save', 'top', 'ref_info'].includes(body.action)) return json({ error: 'banned', ban }, 403);
+  }
+
   if (body.action === 'ref_info') {
     const refs = sanitizeRefs(current && current.state && current.state.refs);
     return json({
@@ -814,7 +853,7 @@ export default async (req) => {
             inv.deviceId = 'referral';
             inv.updatedAt = now;
             await store.setJSON(invKey, inv);
-            try { await updateTop(lb, String(refMarker.by.id), inv.name || 'Игрок', Math.floor(Number(inv.state.total)), inv.photoUrl || null); } catch (e) {}
+            if (!activeBan(inv)) try { await updateTop(lb, String(refMarker.by.id), inv.name || 'Игрок', Math.floor(Number(inv.state.total)), inv.photoUrl || null); } catch (e) {}
             await tgSend(Number(refMarker.by.id), `по твоей ссылке в игру пришёл ${name}: +${REF_COINS.toLocaleString('ru-RU')} монет и +${REF_INCOME} к прибыли в час`);
           }
         }
