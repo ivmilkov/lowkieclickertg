@@ -153,14 +153,13 @@
     mk('div', 'font-size:12px;color:#9aa6b2;text-transform:uppercase;letter-spacing:.5px', 'причина');
     mk('div', 'font-size:17px;font-weight:700;margin:4px 0 16px;word-break:break-word', ban.reason || 'нарушение правил');
     mk('div', 'font-size:12px;color:#9aa6b2;text-transform:uppercase;letter-spacing:.5px', 'срок');
-    const term = mk('div', 'font-size:17px;font-weight:700;margin:4px 0 16px', '');
+    const term = mk('div', 'font-size:17px;font-weight:700;margin:4px 0 0', '');
     const upd = () => {
       if (!ban.until) { term.textContent = 'навсегда'; return; }
       const left = banLeft(ban.until);
       term.textContent = 'до ' + new Date(ban.until).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) + (left ? ' (осталось ' + left + ')' : '');
     };
     upd();
-    mk('div', 'font-size:13px;color:#9aa6b2;line-height:1.4', 'твой прогресс сохранён и никуда не пропал. если считаешь, что это ошибка — обратись к администрации игры.');
     banBox.appendChild(card);
     if (!banned) {
       banned = true;
