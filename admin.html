@@ -95,6 +95,7 @@
     .tkrow .t3 { font-size:13px; color:#d9dee5; margin-top:6px; word-break:break-word; opacity:.85; }
     .bchip { margin:0; padding:7px 12px; border-radius:999px; background:rgba(255,255,255,0.06); color:#d9dee5; font-weight:700; font-size:13px; }
     .bchip.on { background:#f6465d; color:#fff; }
+    .adm { color:#f6465d !important; }
     .bantag { display:inline-block; margin-left:6px; padding:1px 7px; border-radius:6px; background:rgba(246,70,93,0.18); color:#f6465d; border:1px solid rgba(246,70,93,0.4); font-size:10px; font-weight:800; text-transform:uppercase; vertical-align:middle; }
     .st { flex-shrink:0; font-size:10px; font-weight:800; padding:4px 8px; border-radius:6px; text-transform:uppercase; letter-spacing:.4px; }
     .st.open { background:rgba(255,166,0,0.15); color:#ffa600; border:1px solid rgba(255,166,0,0.3); }
@@ -287,9 +288,6 @@
       </div>
 
       <div id="editor" style="display:none">
-        <div class="box">
-          <div id="boostInfo" class="info"></div>
-        </div>
 
         <div class="row">
           <h3>монеты</h3>
@@ -508,6 +506,7 @@
         const rk = document.createElement('div'); rk.className = 'rk'; rk.textContent = String(i + 1);
         const nm = document.createElement('div'); nm.className = 'nm';
         const b = document.createElement('b'); b.textContent = pname(p) + (String(p.id) === MY_ID ? ' (вы)' : '');
+        if (p.isAdmin) b.classList.add('adm');
         if (p.ban) { const t = document.createElement('span'); t.className = 'bantag'; t.textContent = 'бан'; b.appendChild(t); }
         const sp = document.createElement('span');
         sp.textContent = (p.username ? '@' + p.username : 'без username') + ' · ' + p.id;
@@ -546,6 +545,7 @@
       if (p.ban) add('🚫 бан', p.ban.reason + ' · ' + (p.ban.until ? 'до ' + banWhen(p.ban.until) : 'навсегда'));
       add('username', p.username ? '@' + p.username : '—');
       add('ник в игре', p.nickname || '—');
+      add('ранг', p.isAdmin ? 'админ' : 'игрок');
       add('монеты', fmt(p.total));
       add('алмазы', fmt(p.diamonds));
       if (st) {
@@ -574,12 +574,13 @@
 
       homeCard.style.display = 'block';
       document.getElementById('homeTitle').textContent = title;
+      document.getElementById('homeTitle').classList.toggle('adm', !!p.isAdmin);
       fillInfo(document.getElementById('homeInfo'), p);
 
       document.getElementById('pickName').textContent = title;
+      document.getElementById('pickName').classList.toggle('adm', !!p.isAdmin);
       document.getElementById('pickSub').textContent = (p.username ? '@' + p.username : 'без username') + ' · ' + p.id;
       ed.style.display = 'block';
-      fillInfo(document.getElementById('boostInfo'), p);
       renderBan();
       const st = details[String(p.id)];
       if (st) document.getElementById('holdToTapToggle').checked = !!st.holdToTap;
