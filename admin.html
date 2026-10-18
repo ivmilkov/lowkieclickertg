@@ -95,6 +95,8 @@
     .tkrow .t3 { font-size:13px; color:#d9dee5; margin-top:6px; word-break:break-word; opacity:.85; }
     .bchip { margin:0; padding:7px 12px; border-radius:999px; background:rgba(255,255,255,0.06); color:#d9dee5; font-weight:700; font-size:13px; }
     .bchip.on { background:#f6465d; color:#fff; }
+    .ava { border-radius:50%; background:linear-gradient(135deg,#ff7e5f,#feb47b); color:#fff; font-weight:800; display:flex; align-items:center; justify-content:center; overflow:hidden; flex-shrink:0; }
+    .ava img { width:100%; height:100%; object-fit:cover; display:block; }
     .adm { color:#f6465d !important; }
     .bantag { display:inline-block; margin-left:6px; padding:1px 7px; border-radius:6px; background:rgba(246,70,93,0.18); color:#f6465d; border:1px solid rgba(246,70,93,0.4); font-size:10px; font-weight:800; text-transform:uppercase; vertical-align:middle; }
     .st { flex-shrink:0; font-size:10px; font-weight:800; padding:4px 8px; border-radius:6px; text-transform:uppercase; letter-spacing:.4px; }
@@ -183,6 +185,7 @@
       </div>
 
       <div id="homeCard" class="box" style="display:none">
+        <div id="homeAva" style="display:flex;justify-content:center;margin-bottom:8px"></div>
         <h3 id="homeTitle">—</h3>
         <div id="homeInfo" class="info"></div>
       </div>
@@ -275,6 +278,7 @@
 
       <div class="box">
         <div class="pick">
+          <div id="pickAva"></div>
           <div class="who">
             <b id="pickName">игрок не выбран</b>
             <span id="pickSub">выбери, кому накручивать</span>
@@ -486,6 +490,26 @@
       document.getElementById('stDiamonds').textContent = fmt(players.reduce((a, p) => a + (p.diamonds || 0), 0));
     }
 
+    // аватарка из Telegram; пока грузится (или если её нет) — первая буква имени
+    function mkAva(p, size) {
+      const d = document.createElement('div');
+      d.className = 'ava';
+      d.style.cssText = `width:${size}px;height:${size}px;font-size:${Math.round(size * 0.42)}px`;
+      d.textContent = (Array.from(pname(p))[0] || '?').toUpperCase();
+      if (p.photo) {
+        const img = document.createElement('img');
+        img.referrerPolicy = 'no-referrer'; img.alt = '';
+        img.onload = () => { d.textContent = ''; d.appendChild(img); };
+        img.src = p.photo;
+      }
+      return d;
+    }
+    function setAva(id, p, size) {
+      const box = document.getElementById(id);
+      box.innerHTML = '';
+      box.appendChild(mkAva(p, size));
+    }
+
     function renderList(which) {
       const isHome = which === 'home';
       const q = document.getElementById(isHome ? 'searchHome' : 'searchBoost').value.trim().toLowerCase().replace(/^@/, '');
@@ -516,7 +540,7 @@
         const di = document.createElement('i'); di.textContent = fmt(p.diamonds) + ' алм.';
         bl.appendChild(di);
 
-        row.appendChild(rk); row.appendChild(nm); row.appendChild(bl);
+        row.appendChild(rk); row.appendChild(mkAva(p, 40)); row.appendChild(nm); row.appendChild(bl);
         box.appendChild(row);
       });
     }
@@ -574,10 +598,12 @@
 
       homeCard.style.display = 'block';
       document.getElementById('homeTitle').textContent = title;
+      setAva('homeAva', p, 72);
       document.getElementById('homeTitle').classList.toggle('adm', !!p.isAdmin);
       fillInfo(document.getElementById('homeInfo'), p);
 
       document.getElementById('pickName').textContent = title;
+      setAva('pickAva', p, 40);
       document.getElementById('pickName').classList.toggle('adm', !!p.isAdmin);
       document.getElementById('pickSub').textContent = (p.username ? '@' + p.username : 'без username') + ' · ' + p.id;
       ed.style.display = 'block';
